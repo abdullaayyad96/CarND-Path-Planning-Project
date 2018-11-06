@@ -163,6 +163,51 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 }
 
+vector<vector<double>> potential_funtion(double s, double d, double ref_velocity, vector<vector<double>> sensor_fusion_sd_frame, const vector<double> &maps_s, const vector<double> &maps_x, const vector<double> &maps_y)
+{
+	vector<vector<double>> xy_points;
+
+	//Construct potential function
+	//PF =  - ref_velocity * s + w_b1 * exp(- w_b2 * d^2) +  w_b1 * exp(- w_b2 * (d-12)^2) +  summation of w_v1 exp(- w_v2 * [(s - s_v)^2 + (d - d_v)^2] ) for every vehicle
+	double w_b1 = 20;
+	double w_b2 = 10;
+	double w_v1 = 20;
+	double w_v2 = 10;
+	
+	for (int i = 0; i < 50; i++)
+	{
+		//iterate through data points
+
+		//calculate gradient of PF
+		double PF_grad_s = -ref_velocity;
+		double PF_grad_d = 0;
+		
+		PF_grad_d += -2 * w_b1 * w_b2 * d * exp(-w_b2 * d*d) - 2 * w_b1 * w_b2 * (d - 12) * exp(-w_b2 * pow(d - 12, 2));
+
+		
+		for (int j = 0; j < sensor_fusion_sd_frame.size(); j++)
+		{
+			//iterate through cars
+
+			//linearly interpolate the position of each car
+			double s_v = sensor_fusion_sd_frame[j][0] + i * sensor_fusion_sd_frame[j][2] * 0.02;
+			double d_v = sensor_fusion_sd_frame[j][1] + i * sensor_fusion_sd_frame[j][3] * 0.02;
+
+			//update PF
+			PF_grad_s += -2 * w_v1 * w_v2 * (s - s_v) * exp(-w_v2 * (pow(s - s_v, 2) + pow(d - d_v, 2)));
+			PF_grad_d += -2 * w_v1 * w_v2 * (d - d_v) * exp(-w_v2 * (pow(s - s_v, 2) + pow(d - d_v, 2)));
+		}
+
+		cout << PF_grad_s << endl;
+		s -= PF_grad_s * 0.02;
+		d -= PF_grad_d * 0.02;
+
+		xy_points.push_back(getXY(s, d, maps_s, maps_x, maps_y));
+	}
+
+	return xy_points;
+}
+
 int main() {
   uWS::Hub h;
 
@@ -237,16 +282,58 @@ int main() {
           	// Sensor Fusion Data, a list of all other cars on the same side of the road.
           	auto sensor_fusion = j[1]["sensor_fusion"];
 
+			//calculate ds and dd for each car in sensor_fusion
+			vector<vector<double>> sensor_fusion_sd_frame;
+
+			for (int i = 0; i < sensor_fusion.size() ; i++)
+			{
+				vector<double> sd_frame_components;
+
+				double cur_s = sensor_fusion[i][5];
+				double cur_d = sensor_fusion[i][6];
+
+				double next_x = (double)sensor_fusion[i][1] + 0.02 * (double)sensor_fusion[i][3];
+				double next_y = (double)sensor_fusion[i][2] + 0.02 * (double)sensor_fusion[i][4];
+
+				auto next_sd = getFrenet(next_x, next_y, car_yaw, map_waypoints_x, map_waypoints_y);
+
+				double ds = (next_sd[0] - cur_s) / 0.02;
+				double dd = (next_sd[1] - cur_d) / 0.02;
+
+				sd_frame_components.push_back(cur_s);
+				sd_frame_components.push_back(cur_d);
+				sd_frame_components.push_back(ds);
+				sd_frame_components.push_back(dd);
+				sensor_fusion_sd_frame.push_back(sd_frame_components);
+			}
+
           	json msgJson;
 
-          	vector<double> next_x_vals;
-          	vector<double> next_y_vals;
+			vector<double> next_x_vals;
+			vector<double> next_y_vals;
 
+			auto path = potential_funtion(car_s, car_d, 23, sensor_fusion_sd_frame, map_waypoints_s, map_waypoints_x, map_waypoints_y);
 
+			for (int i = 0; i < path.size(); i++)
+			{
+				next_x_vals.push_back(path[i][0]);
+				next_y_vals.push_back(path[i][1]);
+			}
+
+			/*double next_s, next_d;
+
+			double dist_increment = 0.5;
+			for (int i = 0; i < 50; i++)
+			{
+				next_s = car_s + (i+1) * dist_increment;
+				next_d = car_d;
+				vector<double> next_xy = getXY(next_s, next_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+				next_x_vals.push_back(next_xy[0]);
+				next_y_vals.push_back(next_xy[1]);
+			}*/
           	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
           	msgJson["next_x"] = next_x_vals;
           	msgJson["next_y"] = next_y_vals;
-
           	auto msg = "42[\"control\","+ msgJson.dump()+"]";
 
           	//this_thread::sleep_for(chrono::milliseconds(1000));
@@ -294,3 +381,4 @@ int main() {
   }
   h.run();
 }
+
