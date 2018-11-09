@@ -5,11 +5,14 @@
 #include <iostream>
 #include <thread>
 #include <vector>
+#include <limits>
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
 
 using namespace std;
+
+typedef std::numeric_limits< double > dbl;
 
 // for convenience
 using json = nlohmann::json;
@@ -74,7 +77,7 @@ int NextWaypoint(double x, double y, double theta, const vector<double> &maps_x,
 	double angle = fabs(theta-heading);
   angle = min(2*pi() - angle, angle);
 
-  if(angle > pi()/4)
+  if(angle > pi()/2)
   {
     closestWaypoint++;
   if (closestWaypoint == maps_x.size())
@@ -139,8 +142,8 @@ vector<double> getFrenet(double x, double y, double theta, const vector<double> 
 vector<double> getXY(double s, double d, const vector<double> &maps_s, const vector<double> &maps_x, const vector<double> &maps_y)
 {
 	int prev_wp = -1;
-
-	while(s > maps_s[prev_wp+1] && (prev_wp < (int)(maps_s.size()-1) ))
+	
+	while (s > maps_s[prev_wp + 1] && (prev_wp < (int)(maps_s.size() - 1)))
 	{
 		prev_wp++;
 	}
@@ -158,31 +161,46 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 	double x = seg_x + d*cos(perp_heading);
 	double y = seg_y + d*sin(perp_heading);
+	
+	//cout << s << "\t" << d << "\t" << x << "\t" << y << endl;
 
 	return {x,y};
 
 }
 
-vector<vector<double>> potential_funtion(double s, double d, double ref_velocity, vector<vector<double>> sensor_fusion_sd_frame, const vector<double> &maps_s, const vector<double> &maps_x, const vector<double> &maps_y)
+vector<vector<double>> potential_funtion(double start_s, double start_d, double ref_velocity, double max_acceleration, int start_point, vector<vector<double>> sensor_fusion_sd_frame, const vector<double> &maps_s, const vector<double> &maps_x, const vector<double> &maps_y)
 {
 	vector<vector<double>> xy_points;
+	//auto start_xy = getXY(start_s, start_d, maps_s, maps_x, maps_y);
+	//cout << "start" << "\t" << start_s << "\t" << start_d << "\t" << start_xy[0] << "\t" << start_xy[1] << endl;
+	double s = start_s;
+	double d = start_d;
 
 	//Construct potential function
-	//PF =  - ref_velocity * s + w_b1 * exp(- w_b2 * d^2) +  w_b1 * exp(- w_b2 * (d-12)^2) +  summation of w_v1 exp(- w_v2 * [(s - s_v)^2 + (d - d_v)^2] ) for every vehicle
-	double w_b1 = 20;
-	double w_b2 = 10;
-	double w_v1 = 20;
-	double w_v2 = 10;
-	
-	for (int i = 0; i < 50; i++)
+	//PF =  - ref_velocity * s + w_b1 * exp(- w_b2 * d^2) +  w_b1 * exp(- w_b2 * (d-12)^2) +  summation of w_v1 exp(- w_v2 * (s - s_v)^2 - w_v3 *(d - d_v)^2 ) for every vehicle
+	double w_b1 = 2000;
+	double w_b2 = 5;
+	double w_v1 = 1000;
+	double w_v2 = 0.01;
+	double w_v3 = 100;
+	double w_v4 = 0.2;
+	double w_lane = 3;
+
+	for (int i = start_point; i < 150; i++)
 	{
 		//iterate through data points
-
+		
 		//calculate gradient of PF
 		double PF_grad_s = -ref_velocity;
 		double PF_grad_d = 0;
 		
 		PF_grad_d += -2 * w_b1 * w_b2 * d * exp(-w_b2 * d*d) - 2 * w_b1 * w_b2 * (d - 12) * exp(-w_b2 * pow(d - 12, 2));
+
+		//quadratic function to keep lane
+		int lane = (int)d / 4;
+		double d_lane = 2 + 4 * lane;
+		PF_grad_d += 2 * w_lane * (d - d_lane);
+
 
 		
 		for (int j = 0; j < sensor_fusion_sd_frame.size(); j++)
@@ -194,14 +212,26 @@ vector<vector<double>> potential_funtion(double s, double d, double ref_velocity
 			double d_v = sensor_fusion_sd_frame[j][1] + i * sensor_fusion_sd_frame[j][3] * 0.02;
 
 			//update PF
-			PF_grad_s += -2 * w_v1 * w_v2 * (s - s_v) * exp(-w_v2 * (pow(s - s_v, 2) + pow(d - d_v, 2)));
-			PF_grad_d += -2 * w_v1 * w_v2 * (d - d_v) * exp(-w_v2 * (pow(s - s_v, 2) + pow(d - d_v, 2)));
+			//if(abs(d-d_v)<2)
+			if (S_v < (s - 5)) {
+				PF_grad_s += -2 * w_v1 * w_v2 * (s - s_v) * exp(-w_v2 * pow(s - s_v, 2) - w_v4 * pow(d - d_v, 2));
+				//if ((s - s_v) > -15 && (s - s_v) < 5)
+				PF_grad_d += -2 * w_v1 * w_v4 * (d - d_v) * exp(-w_v2 * pow(s - s_v, 2) - w_v4 * pow(d - d_v, 2));
+			}
 		}
 
-		cout << PF_grad_s << endl;
+		//double PF_grad_s_norm = ref_velocity * PF_grad_s / sqrt(pow(PF_grad_s, 2) + pow(PF_grad_d, 2));
+		//double PF_grad_d_norm = ref_velocity * PF_grad_d / sqrt(pow(PF_grad_s, 2) + pow(PF_grad_d, 2));
+		if (PF_grad_s < -ref_velocity)
+			PF_grad_s = -ref_velocity;
+		if (PF_grad_s > 0)
+			PF_grad_s = 0;
+		if (fabs(PF_grad_d) > 0.5)
+			PF_grad_d = 0.5 * PF_grad_d / fabs(PF_grad_d);
+
 		s -= PF_grad_s * 0.02;
 		d -= PF_grad_d * 0.02;
-
+		
 		xy_points.push_back(getXY(s, d, maps_s, maps_x, maps_y));
 	}
 
@@ -311,14 +341,52 @@ int main() {
 
 			vector<double> next_x_vals;
 			vector<double> next_y_vals;
+			
+			int previous_iteration = previous_path_x.size();
+			if (previous_iteration >= 0)
+				previous_iteration = 0;
 
-			auto path = potential_funtion(car_s, car_d, 23, sensor_fusion_sd_frame, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+			if (previous_iteration < 2)
+				previous_iteration = 0;
 
-			for (int i = 0; i < path.size(); i++)
+			//add previous path points
+			for (int i = 0; i < previous_iteration; i++)
 			{
-				next_x_vals.push_back(path[i][0]);
-				next_y_vals.push_back(path[i][1]);
+				next_x_vals.push_back(previous_path_x[i]);
+				next_y_vals.push_back(previous_path_y[i]);
 			}
+
+			if (previous_iteration >= 2)	{
+				double prev_x = previous_path_x[previous_iteration - 1];
+				double prev_xx = previous_path_x[previous_iteration - 2];
+				double prev_y = previous_path_y[previous_iteration - 1];
+				double prev_yy = previous_path_y[previous_iteration - 2];
+
+				double prev_yaw = atan2(prev_y - prev_yy, prev_x - prev_xx);
+
+				auto check_frenet = getFrenet(prev_x, prev_y, prev_yaw, map_waypoints_x, map_waypoints_y);
+				end_path_s = check_frenet[0];
+				end_path_d = check_frenet[1];
+				//cout << "yaw" << "\t" << prev_yaw << endl;
+				//cout << "sooo" << "\t" << end_path_s << "\t" << end_path_d << "\t" << prev_x << "\t" << prev_y << endl;
+			} else {
+				end_path_s = car_s;
+				end_path_d = car_d;
+			}
+
+			auto new_path = potential_funtion(end_path_s, end_path_d, 30, previous_iteration, sensor_fusion_sd_frame, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+
+			for (int i = 0; i < new_path.size(); i++)
+			{
+				next_x_vals.push_back(new_path[i][0]);
+				next_y_vals.push_back(new_path[i][1]);
+			}
+			/*cout << "yeeeehaaaa" << endl;
+
+			for (int i = 0; i < next_x_vals.size(); i++)
+			{
+				cout << next_x_vals[i] << "\t" << next_y_vals[i] << endl;
+			}*/
 
 			/*double next_s, next_d;
 
