@@ -168,30 +168,39 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 }
 
-vector<vector<double>> potential_funtion(double start_s, double start_d, double ref_velocity, double max_acceleration, int start_point, vector<vector<double>> sensor_fusion_sd_frame, const vector<double> &maps_s, const vector<double> &maps_x, const vector<double> &maps_y)
+vector<vector<double>> potential_funtion(double start_s, double start_d, double start_x, double start_y, double start_yaw, double cur_speed, double ref_velocity_s, double max_acceleration, int start_point, vector<vector<double>> sensor_fusion_sd_frame, const vector<double> &maps_s, const vector<double> &maps_x, const vector<double> &maps_y)
 {
 	vector<vector<double>> xy_points;
 	//auto start_xy = getXY(start_s, start_d, maps_s, maps_x, maps_y);
 	//cout << "start" << "\t" << start_s << "\t" << start_d << "\t" << start_xy[0] << "\t" << start_xy[1] << endl;
 	double s = start_s;
 	double d = start_d;
+	double x = start_x;
+	double y = start_y;
+	double speed_x = cur_speed * cos(start_yaw);
+	double speed_y = cur_speed * sin(start_yaw);
 
 	//Construct potential function
 	//PF =  - ref_velocity * s + w_b1 * exp(- w_b2 * d^2) +  w_b1 * exp(- w_b2 * (d-12)^2) +  summation of w_v1 exp(- w_v2 * (s - s_v)^2 - w_v3 *(d - d_v)^2 ) for every vehicle
 	double w_b1 = 2000;
-	double w_b2 = 5;
+	double w_b2 = 1;
 	double w_v1 = 1000;
 	double w_v2 = 0.01;
 	double w_v3 = 100;
 	double w_v4 = 0.2;
 	double w_lane = 3;
 
-	for (int i = start_point; i < 150; i++)
+	double speed_s = speed_x;
+
+	double new_x, new_y, new_yaw, new_speed_x, new_speed_y, acc_x, acc_y, speed_mag, acc_mag;
+	vector<double> new_points, new_sd;
+
+	for (int i = start_point; i < 15; i++)
 	{
 		//iterate through data points
 		
 		//calculate gradient of PF
-		double PF_grad_s = -ref_velocity;
+		double PF_grad_s = -ref_velocity_s;
 		double PF_grad_d = 0;
 		
 		PF_grad_d += -2 * w_b1 * w_b2 * d * exp(-w_b2 * d*d) - 2 * w_b1 * w_b2 * (d - 12) * exp(-w_b2 * pow(d - 12, 2));
@@ -208,31 +217,59 @@ vector<vector<double>> potential_funtion(double start_s, double start_d, double 
 			//iterate through cars
 
 			//linearly interpolate the position of each car
-			double s_v = sensor_fusion_sd_frame[j][0] + i * sensor_fusion_sd_frame[j][2] * 0.02;
-			double d_v = sensor_fusion_sd_frame[j][1] + i * sensor_fusion_sd_frame[j][3] * 0.02;
+			double s_v = sensor_fusion_sd_frame[j][0] + i * sensor_fusion_sd_frame[j][2] * 0.2;
+			double d_v = sensor_fusion_sd_frame[j][1] + i * sensor_fusion_sd_frame[j][3] * 0.2;
 
 			//update PF
 			//if(abs(d-d_v)<2)
-			if (S_v < (s - 5)) {
+			if (((s - s_v) < -5 ) || (sensor_fusion_sd_frame[j][2] > speed_s)) {
 				PF_grad_s += -2 * w_v1 * w_v2 * (s - s_v) * exp(-w_v2 * pow(s - s_v, 2) - w_v4 * pow(d - d_v, 2));
 				//if ((s - s_v) > -15 && (s - s_v) < 5)
-				PF_grad_d += -2 * w_v1 * w_v4 * (d - d_v) * exp(-w_v2 * pow(s - s_v, 2) - w_v4 * pow(d - d_v, 2));
+				PF_grad_d += -2 * 0.5 * w_v1 * w_v4 * (d - d_v) * exp(-w_v2 * pow(s - s_v, 2) - w_v4 * pow(d - d_v, 2));
 			}
 		}
 
 		//double PF_grad_s_norm = ref_velocity * PF_grad_s / sqrt(pow(PF_grad_s, 2) + pow(PF_grad_d, 2));
 		//double PF_grad_d_norm = ref_velocity * PF_grad_d / sqrt(pow(PF_grad_s, 2) + pow(PF_grad_d, 2));
-		if (PF_grad_s < -ref_velocity)
-			PF_grad_s = -ref_velocity;
+		if (PF_grad_s < -ref_velocity_s)
+			PF_grad_s = -ref_velocity_s;
 		if (PF_grad_s > 0)
 			PF_grad_s = 0;
-		if (fabs(PF_grad_d) > 0.5)
-			PF_grad_d = 0.5 * PF_grad_d / fabs(PF_grad_d);
+		if (fabs(PF_grad_d) > 1)
+			PF_grad_d = 1 * PF_grad_d / fabs(PF_grad_d);
 
-		s -= PF_grad_s * 0.02;
-		d -= PF_grad_d * 0.02;
-		
-		xy_points.push_back(getXY(s, d, maps_s, maps_x, maps_y));
+		speed_x = PF_grad_s;
+
+		for (int j = 1; j < 11; j++) {
+			s -= PF_grad_s * 0.02;
+			d -= PF_grad_d * 0.02;
+			cout << s << endl;
+			new_points = getXY(s, d, maps_s, maps_x, maps_y);
+			xy_points.push_back(new_points);
+		}
+
+		/*new_speed_x = (new_points[0] - x)/0.02;
+		new_speed_y = (new_points[1] - y)/0.02;
+
+		//limit speed
+		speed_mag = sqrt(pow(new_speed_x, 2) + pow(new_speed_y, 2));
+		if (speed_mag > ref_velocity_s) {
+			new_speed_x = ref_velocity_s * new_speed_x / speed_mag;
+			new_speed_y = ref_velocity_s * new_speed_y / speed_mag;
+		}
+
+		new_x = x + new_speed_x*0.02;
+		new_y = y + new_speed_y*0.02;
+
+		new_yaw = atan2(new_y - y, new_x - x);
+		y = new_y;
+		x = new_x;
+
+		new_sd = getFrenet(x, y, new_yaw, maps_x, maps_y);
+		s = new_sd[0]; 
+		d = new_sd[1];*/
+				
+		//xy_points.push_back(new_points);
 	}
 
 	return xy_points;
@@ -374,7 +411,7 @@ int main() {
 				end_path_d = car_d;
 			}
 
-			auto new_path = potential_funtion(end_path_s, end_path_d, 30, previous_iteration, sensor_fusion_sd_frame, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+			auto new_path = potential_funtion(end_path_s, end_path_d, car_x, car_y, car_yaw, car_speed, 30, 100, previous_iteration, sensor_fusion_sd_frame, map_waypoints_s, map_waypoints_x, map_waypoints_y);
 
 			for (int i = 0; i < new_path.size(); i++)
 			{
