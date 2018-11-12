@@ -182,13 +182,13 @@ vector<vector<double>> potential_funtion(double start_s, double start_d, double 
 
 	//Construct potential function
 	//PF =  - ref_velocity * s + w_b1 * exp(- w_b2 * d^2) +  w_b1 * exp(- w_b2 * (d-12)^2) +  summation of w_v1 exp(- w_v2 * (s - s_v)^2 - w_v3 *(d - d_v)^2 ) for every vehicle
-	double w_b1 = 2000;
+	double w_b1 = 200;
 	double w_b2 = 1;
-	double w_v1 = 100;
-	double w_v2 = 0.01;
+	double w_v1 = 10;
+	double w_v2 = 0.005;
 	double w_v3 = 10;
 	double w_v4 = 0.2;
-	double w_lane = 0;
+	double w_lane = 0.1;
 
 	double speed_s = speed_x;
 
@@ -198,20 +198,20 @@ vector<vector<double>> potential_funtion(double start_s, double start_d, double 
 	for (int i = start_point; i < 50; i++)
 	{
 		//iterate through data points
+		if (cur_speed < ref_velocity_s)
+			cur_speed += 0.1;
 		
 		//calculate gradient of PF
 		double PF_grad_s = -cur_speed;
 		double PF_grad_d = 0;
 
-		if (cur_speed < ref_velocity_s)
-			cur_speed += 0.25;
-		
+			
 		PF_grad_d += -2 * w_b1 * w_b2 * d * exp(-w_b2 * d*d) - 2 * w_b1 * w_b2 * (d - 12) * exp(-w_b2 * pow(d - 12, 2));
 
 		//quadratic function to keep lane
 		int lane = (int)d / 4;
 		double d_lane = 2 + 4 * lane;
-		PF_grad_d += 2 * w_lane * (d - d_lane);
+		PF_grad_d += w_lane * (d - d_lane) / fabs(d - d_lane);
 		
 
 		
@@ -228,14 +228,10 @@ vector<vector<double>> potential_funtion(double start_s, double start_d, double 
 
 				//update PF
 				//if(abs(d-d_v)<2)
-			if ( ((s - s_v) < 5)  && ( (s - s_v) > -20 ) ) {
-				PF_grad_s += 2 * w_v1 * w_v2 * (s_v - s) * exp(-w_v2 * pow(s_v - s, 2) - w_v4 * pow(d - d_v, 2));
-				cout << d_v << "\t" << (s_v - s) << "\t" << 2 * w_v1 * w_v2 * (s_v - s) * exp(-w_v2 * pow(s - s_v, 2) - w_v4 * pow(d - d_v, 2)) << endl;
-				//PF_grad_s += w_v1 * exp(- w_v4 * pow(d - d_v, 2)) / (s_v - s);
-				//cout << (s - s_v) << "\t" << (d - d_v) << "\t" << w_v1 * exp(-w_v2 * pow(s - s_v, 2) - w_v4 * pow(d - d_v, 2)) * (s_v - s) / fabs(s_v - s) << endl;
-				//PF_grad_d += w_v3 * exp(-w_v2 * pow(s - s_v, 2) - w_v4 * pow(d - d_v, 2)) * (d_v - d) / fabs(d_v - d);
-				//if ((s - s_v) > -15 && (s - s_v) < 5)
-				PF_grad_d += 2 * w_v1 * w_v4 * (d - d_v) * exp(-w_v2 * pow(s - s_v, 2) - w_v4 * pow(d - d_v, 2));
+			if ( ((s - s_v) < 5) ) {
+				PF_grad_s += (double) 2 * w_v1 * w_v2 * (s_v - s) * exp(-w_v2 * pow(s_v - s, 2) - w_v4 * pow(d - d_v, 2));
+						
+				PF_grad_d += 2 * w_v1 * w_v4 * (d_v - d) * exp(-w_v2 * pow(s - s_v, 2) - w_v4 * pow(d - d_v, 2));
 			}
 		}
 
@@ -245,10 +241,10 @@ vector<vector<double>> potential_funtion(double start_s, double start_d, double 
 			PF_grad_s = -ref_velocity_s;
 		if (PF_grad_s > 0)
 			PF_grad_s = 0;
-		if (fabs(PF_grad_d) > (5))
-			PF_grad_d = 5 * PF_grad_d / fabs(PF_grad_d);
+		if (fabs(PF_grad_d) > (10))
+			PF_grad_d = 10 * PF_grad_d / fabs(PF_grad_d);
 		
-		PF_grad_d = 0;
+		//PF_grad_d = 0;
 		s -= PF_grad_s * 0.02;
 		d -= PF_grad_d * 0.02;
 		new_points = getXY(s, d, maps_s, maps_x, maps_y);
@@ -433,7 +429,7 @@ int main() {
 				end_speed = car_speed;
 			}
 
-			auto new_path = potential_funtion(end_s, end_d, car_x, car_y, car_yaw, end_speed, 30, 100, previous_iteration, sensor_fusion_sd_frame, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+			auto new_path = potential_funtion(end_s, end_d, car_x, car_y, car_yaw, end_speed, 22, 100, previous_iteration, sensor_fusion_sd_frame, map_waypoints_s, map_waypoints_x, map_waypoints_y);
 
 			end_s = new_path[new_path.size() - 1][0];
 			end_d = new_path[new_path.size() - 1][1];
