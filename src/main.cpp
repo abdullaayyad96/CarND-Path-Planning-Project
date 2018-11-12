@@ -8,6 +8,7 @@
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
+#include "spline.h"
 
 using namespace std;
 
@@ -74,7 +75,7 @@ int NextWaypoint(double x, double y, double theta, const vector<double> &maps_x,
 	double angle = fabs(theta-heading);
   angle = min(2*pi() - angle, angle);
 
-  if(angle > pi()/4)
+  if(angle > pi()/2)
   {
     closestWaypoint++;
   if (closestWaypoint == maps_x.size())
@@ -163,50 +164,144 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 }
 
-vector<vector<double>> potential_funtion(double s, double d, double ref_velocity, vector<vector<double>> sensor_fusion_sd_frame, const vector<double> &maps_s, const vector<double> &maps_x, const vector<double> &maps_y)
+vector<double> lane_cost(double start_s, double ref_velocity, double cur_velocity, vector<vector<double>> sensor_fusion_sd_frame)
+{
+	//return cost of driving at each lane
+	vector<double> costs;
+
+	//Construct cost function
+	//CF =   summation of w_v1 exp(- w_v2 * (s - s_v)^2  - w_v3 * (d - d_v)^2 ) for every vehicle
+
+	double w_v1 = 10;
+	double w_v2 = 0.05;
+	double w_v3 = 0.3;
+	
+
+	for (int i = 0 ; i < 3 ; i++)
+	{
+		//iterate through lanes
+		double d = 4 * i + 2;
+		double cost = 0;
+		double s = start_s;
+		double car_velocity = 0.44704 * cur_velocity;
+
+		for (int t = 0; t < 10 ; t++)
+		{
+			//integrate for 10 seconds 
+
+			s = start_s + t * car_velocity;
+
+			if (car_velocity < ref_velocity)
+				car_velocity += 0.1;
+			
+			for (int j = 0; j < sensor_fusion_sd_frame.size(); j++)
+			{
+				//iterate through cars
+
+				//linearly interpolate the position of each car
+				double s_v = sensor_fusion_sd_frame[j][0] + t * sensor_fusion_sd_frame[j][2];
+				double d_v = sensor_fusion_sd_frame[j][1];// +t * sensor_fusion_sd_frame[j][3];
+
+				if (s_v > 6945.554)
+					s_v -= 6945.554;
+
+				//if (fabs(s_v - s) < 5)
+				//	cout << j << "\t" << t << "\t" << (s_v - s) << "\t" << d_v << endl;
+
+				//update PF
+				if (d_v > 0)
+					cost += w_v1 * exp(-w_v2 * pow(s - s_v, 2) - w_v3 * pow(d - d_v, 2));
+			
+			}
+		}
+		//cout << d << "\t" << cost << endl;
+		costs.push_back(cost);
+		
+	}
+	return costs;
+}
+
+
+double desired_d(double car_d, vector<double> lane_cost)
+{
+	//return desired d value for a lane
+
+	int car_lane = (int)car_d / 4;
+	double car_lane_cost = lane_cost[car_lane];
+
+	int desired_lane;
+	double min_lane_cost = std::numeric_limits<double>::infinity();
+
+	for (int i = 0; i < lane_cost.size(); i++)
+	{
+		if (lane_cost[i] < min_lane_cost)
+		{
+			min_lane_cost = lane_cost[i];
+			desired_lane = i;
+		}
+	}
+	cout << desired_lane << endl;
+	//leaving a deadband for current lane
+	if ((min_lane_cost > (0.9 * car_lane_cost)) || ( (car_lane_cost - min_lane_cost) < 3 ))
+		desired_lane = car_lane;	
+	cout << desired_lane << endl;
+	//in case double lane change is needed, make sure mid lane is safe
+	if ( (fabs(desired_lane - car_lane ) > 1 ) && (lane_cost[1] > lane_cost[car_lane] ) )
+		desired_lane = car_lane;
+	cout << desired_lane << endl;
+	return 4 * desired_lane + 2;
+}
+
+vector<vector<double>> trajectory(double s, double d, double desired_d, double ref_velocity, double car_velocity, vector<vector<double>> sensor_fusion_sd_frame, int start_point, const vector<double> &maps_s, const vector<double> &maps_x, const vector<double> &maps_y)
 {
 	vector<vector<double>> xy_points;
 
-	//Construct potential function
-	//PF =  - ref_velocity * s + w_b1 * exp(- w_b2 * d^2) +  w_b1 * exp(- w_b2 * (d-12)^2) +  summation of w_v1 exp(- w_v2 * [(s - s_v)^2 + (d - d_v)^2] ) for every vehicle
-	double w_b1 = 20;
-	double w_b2 = 10;
-	double w_v1 = 20;
-	double w_v2 = 10;
-	
-	for (int i = 0; i < 50; i++)
+	double w_v1 = 100;
+	double w_v2 = 0.05;
+	double w_v3 = 1;
+
+	for (int i = start_point; i < 50; i++)
 	{
-		//iterate through data points
-
-		//calculate gradient of PF
-		double PF_grad_s = -ref_velocity;
-		double PF_grad_d = 0;
-		
-		PF_grad_d += -2 * w_b1 * w_b2 * d * exp(-w_b2 * d*d) - 2 * w_b1 * w_b2 * (d - 12) * exp(-w_b2 * pow(d - 12, 2));
-
-		
+		if (car_velocity < ref_velocity)
+		{
+			car_velocity += 0.1;
+		}
 		for (int j = 0; j < sensor_fusion_sd_frame.size(); j++)
 		{
 			//iterate through cars
 
 			//linearly interpolate the position of each car
-			double s_v = sensor_fusion_sd_frame[j][0] + i * sensor_fusion_sd_frame[j][2] * 0.02;
-			double d_v = sensor_fusion_sd_frame[j][1] + i * sensor_fusion_sd_frame[j][3] * 0.02;
+			double s_v = sensor_fusion_sd_frame[j][0] + i * 0.02 * sensor_fusion_sd_frame[j][2];
+			double d_v = sensor_fusion_sd_frame[j][1] + i * 0.02 * sensor_fusion_sd_frame[j][3];
+
+			if (s_v > 6945.554)
+				s_v -= 6945.554;
 
 			//update PF
-			PF_grad_s += -2 * w_v1 * w_v2 * (s - s_v) * exp(-w_v2 * (pow(s - s_v, 2) + pow(d - d_v, 2)));
-			PF_grad_d += -2 * w_v1 * w_v2 * (d - d_v) * exp(-w_v2 * (pow(s - s_v, 2) + pow(d - d_v, 2)));
-		}
+			if (s_v > s)
+			{
+				car_velocity += - 1.5 * exp(-0.005 * pow(s_v - s, 2)) * exp(-10 * pow(d_v - d, 2));
+			}
 
-		cout << PF_grad_s << endl;
-		s -= PF_grad_s * 0.02;
-		d -= PF_grad_d * 0.02;
+		}	
 
-		xy_points.push_back(getXY(s, d, maps_s, maps_x, maps_y));
+		if (car_velocity < 0)
+			car_velocity = 0;
+		if ( fabs(desired_d - d) > 0.25 )
+			d += 0.5 * 0.02 * (desired_d - d) / fabs(desired_d - d);
+
+		s += car_velocity * 0.02;
+
+		auto xy_point = getXY(s, d, maps_s, maps_x, maps_y);
+
+		xy_points.push_back({ s, d, car_velocity, xy_point[0], xy_point[1] });
 	}
 
 	return xy_points;
 }
+
+double end_s, end_d, end_speed, avg_desired_d;
+int i2, i6, i10;
 
 int main() {
   uWS::Hub h;
@@ -216,7 +311,7 @@ int main() {
   vector<double> map_waypoints_y;
   vector<double> map_waypoints_s;
   vector<double> map_waypoints_dx;
-  vector<double> map_waypoints_dy;
+  vector<double> map_waypoints_dy; 
 
   // Waypoint map to read from
   string map_file_ = "../data/highway_map.csv";
@@ -261,31 +356,31 @@ int main() {
         
         string event = j[0].get<string>();
         
-        if (event == "telemetry") {
-          // j[1] is the data JSON object
-          
-        	// Main car's localization Data
-          	double car_x = j[1]["x"];
-          	double car_y = j[1]["y"];
-          	double car_s = j[1]["s"];
-          	double car_d = j[1]["d"];
-          	double car_yaw = j[1]["yaw"];
-          	double car_speed = j[1]["speed"];
+		if (event == "telemetry") {
+			// j[1] is the data JSON object
 
-          	// Previous path data given to the Planner
-          	auto previous_path_x = j[1]["previous_path_x"];
-          	auto previous_path_y = j[1]["previous_path_y"];
-          	// Previous path's end s and d values 
-          	double end_path_s = j[1]["end_path_s"];
-          	double end_path_d = j[1]["end_path_d"];
+			  // Main car's localization Data
+			double car_x = j[1]["x"];
+			double car_y = j[1]["y"];
+			double car_s = j[1]["s"];
+			double car_d = j[1]["d"];
+			double car_yaw = j[1]["yaw"];
+			double car_speed = j[1]["speed"];
 
-          	// Sensor Fusion Data, a list of all other cars on the same side of the road.
-          	auto sensor_fusion = j[1]["sensor_fusion"];
+			// Previous path data given to the Planner
+			auto previous_path_x = j[1]["previous_path_x"];
+			auto previous_path_y = j[1]["previous_path_y"];
+			// Previous path's end s and d values 
+			double end_path_s = j[1]["end_path_s"];
+			double end_path_d = j[1]["end_path_d"];
+
+			// Sensor Fusion Data, a list of all other cars on the same side of the road.
+			auto sensor_fusion = j[1]["sensor_fusion"];
 
 			//calculate ds and dd for each car in sensor_fusion
 			vector<vector<double>> sensor_fusion_sd_frame;
 
-			for (int i = 0; i < sensor_fusion.size() ; i++)
+			for (int i = 0; i < sensor_fusion.size(); i++)
 			{
 				vector<double> sd_frame_components;
 
@@ -300,6 +395,10 @@ int main() {
 				double ds = (next_sd[0] - cur_s) / 0.02;
 				double dd = (next_sd[1] - cur_d) / 0.02;
 
+				/*cout << "ok" << endl;
+				cout << cur_d << "\t" << next_sd[1] << endl;
+				cout << "ok" << endl;*/
+
 				sd_frame_components.push_back(cur_s);
 				sd_frame_components.push_back(cur_d);
 				sd_frame_components.push_back(ds);
@@ -307,31 +406,43 @@ int main() {
 				sensor_fusion_sd_frame.push_back(sd_frame_components);
 			}
 
-          	json msgJson;
+			json msgJson;
 
 			vector<double> next_x_vals;
 			vector<double> next_y_vals;
 
-			auto path = potential_funtion(car_s, car_d, 23, sensor_fusion_sd_frame, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+			for (int i = 0; i < previous_path_x.size(); i++)
+			{
+				next_x_vals.push_back(previous_path_x[i]);
+				next_y_vals.push_back(previous_path_y[i]);
+			}
+
+			if (previous_path_x.size() == 0) 
+			{
+				end_path_s = car_s;
+				end_path_d = car_d;
+				end_s = car_s;
+				end_d = car_d;
+				end_speed = car_speed;
+			}
+
+			auto cost = lane_cost(car_s, 20, car_speed, sensor_fusion_sd_frame);
+			cout << cost[0] << "\t" << cost[1] << "\t" << cost[2] << endl;
+			double d_target = desired_d(end_d, cost);
+			cout << d_target << endl;
+			auto path = trajectory(end_s, end_d, d_target, 20, end_speed, sensor_fusion_sd_frame, previous_path_x.size(), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+
+			end_s = path[path.size() - 1][0];
+			end_d = path[path.size() - 1][1];
+			end_speed = path[path.size() - 1][2];
 
 			for (int i = 0; i < path.size(); i++)
 			{
-				next_x_vals.push_back(path[i][0]);
-				next_y_vals.push_back(path[i][1]);
+				next_x_vals.push_back(path[i][3]);
+				next_y_vals.push_back(path[i][4]);
 			}
 
-			/*double next_s, next_d;
 
-			double dist_increment = 0.5;
-			for (int i = 0; i < 50; i++)
-			{
-				next_s = car_s + (i+1) * dist_increment;
-				next_d = car_d;
-				vector<double> next_xy = getXY(next_s, next_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-				next_x_vals.push_back(next_xy[0]);
-				next_y_vals.push_back(next_xy[1]);
-			}*/
-          	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
           	msgJson["next_x"] = next_x_vals;
           	msgJson["next_y"] = next_y_vals;
           	auto msg = "42[\"control\","+ msgJson.dump()+"]";
