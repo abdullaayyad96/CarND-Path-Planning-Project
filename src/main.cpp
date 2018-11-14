@@ -521,7 +521,7 @@ int main() {
 				double next_x = (double)sensor_fusion[i][1] + 0.02 * (double)sensor_fusion[i][3];
 				double next_y = (double)sensor_fusion[i][2] + 0.02 * (double)sensor_fusion[i][4];
 
-				auto next_sd = getFrenet(next_x, next_y, car_yaw, map_waypoints_x, map_waypoints_y);
+				auto next_sd = getFrenet(next_x, next_y, deg2rad(car_yaw), map_waypoints_x, map_waypoints_y);
 
 				double ds = (next_sd[0] - cur_s) / 0.02;
 				double dd = (next_sd[1] - cur_d) / 0.02;
@@ -552,6 +552,10 @@ int main() {
 			{
 				next_x.push_back(previous_path_x[i]);
 				next_y.push_back(previous_path_y[i]);
+				if (i < 25) {
+					next_x_vals.push_back(previous_path_x[i]);
+					next_y_vals.push_back(previous_path_y[i]);
+				}
 			}
 
 
@@ -561,7 +565,7 @@ int main() {
 				end_path_d = car_d;
 				end_s = car_s;
 				end_d = car_d;
-				end_speed = car_speed;
+				end_speed = 0.44704*car_speed;
 			}
 
 			auto cost = lane_cost(car_s, car_d, 20, car_speed, sensor_fusion_sd_frame);
@@ -601,30 +605,37 @@ int main() {
 			}
 
 			vector<double> time;
-			cout << "start \t" << car_x << "\t" << car_y << endl;
 			for (int i = 0; i < next_x.size(); i++)
 			{
-				if ( ((i % 10) == 0) || (i==(next_x.size()-1)) )
+				if ( ((i % 7) == 0) || (i==(next_x.size()-1)) )
 				{
 					ptsx.push_back(next_x[i]);
 					ptsy.push_back(next_y[i]);
-					cout << "fit \t" << next_x[i] << "\t" << next_y[i] << endl;
+					//cout << "fit \t" << next_x[i] << "\t" << next_y[i] << endl;
 					time.push_back((double)(i+1.0) * 0.02);
 				}
 			}
 
 			auto x_poly = polyfit(time, ptsx, 3);
 			auto y_poly = polyfit(time, ptsy, 3);
-			double final_yaw = atan2(next_y[next_x.size() - 1] - next_y[next_x.size() - 2], next_x[next_x.size() - 1] - next_x[next_x.size() - 2]);
-			vector<double> xstart = { car_x, car_speed*cos(car_yaw), startacc_x };
-			vector<double> xend = { next_x[next_x.size() - 1], end_speed*cos(final_yaw), 0};
-			//x_poly = JMT(xstart, xend, 0.02*(next_x.size()+1));
-			vector<double> ystart = { car_y, car_speed*sin(car_yaw), startacc_y };
-			vector<double> yend = { next_y[next_y.size() - 1], end_speed*sin(final_yaw), 0 };
-			//y_poly = JMT(ystart, yend, 0.02*(next_x.size() + 1));
-			double xcar, ycar;
 
-			for (int i = 1; i < 51; i++)
+			//if (previous_path_x.size() != 0)
+			//{
+			//	startacc_x = JMT_eval_acc(x_poly, 1 - 0.02*previous_path_x.size());
+			//	startacc_y = JMT_eval_acc(y_poly, 1 - 0.02*previous_path_x.size());
+			//}
+			double final_yaw = atan2(next_y[next_x.size() - 1] - next_y[next_x.size() - 2], next_x[next_x.size() - 1] - next_x[next_x.size() - 2]);
+
+			vector<double> xstart = { car_x, 0.44704*car_speed*cos(deg2rad(car_yaw)), startacc_x };
+			vector<double> xend = { next_x[next_x.size() - 1], end_speed*cos(final_yaw), 0};
+			//x_poly = JMT(xstart, xend, 0.02*(next_x.size()));
+			vector<double> ystart = { car_y, 0.44704*car_speed*sin(deg2rad(car_yaw)), startacc_y };
+			vector<double> yend = { next_y[next_y.size() - 1], end_speed*sin(final_yaw), 0 };
+			//y_poly = JMT(ystart, yend, 0.02*(next_x.size()));
+			double xcar, ycar;
+			//cout << "speeds" << car_speed * cos(deg2rad(car_yaw)) << "\t" << end_speed * cos(final_yaw) << "\t" << car_speed * cos(deg2rad(car_yaw)) << "\t" << end_speed * sin(final_yaw) << endl;
+
+			for (int i = (1+25); i < 51; i++)
 			{
 				double t = (double)i * 0.02;
 				xcar = polyeval(x_poly, t);
@@ -632,7 +643,6 @@ int main() {
 
 				//xcar = JMT_eval(x_poly, t);
 				//ycar = JMT_eval(y_poly, t);
-				cout << "eval \t" << xcar << "\t" << ycar << endl;
 
 				next_x_vals.push_back(xcar);
 				next_y_vals.push_back(ycar);
