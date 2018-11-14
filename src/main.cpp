@@ -7,6 +7,7 @@
 #include <vector>
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
+#include "Eigen-3.3/Eigen/Dense"
 #include "json.hpp"
 #include "spline.h"
 
@@ -87,6 +88,41 @@ int NextWaypoint(double x, double y, double theta, const vector<double> &maps_x,
   return closestWaypoint;
 }
 
+// Fit a polynomial.
+// Adapted from
+// https://github.com/JuliaMath/Polynomials.jl/blob/master/src/Polynomials.jl#L676-L716
+Eigen::VectorXd polyfit(vector<double> xvals, vector<double> yvals,	int order) {
+
+	assert(xvals.size() == yvals.size());
+	assert(order >= 1 && order <= xvals.size() - 1);
+
+	Eigen::MatrixXd A(xvals.size(), order + 1);
+
+	for (unsigned int i = 0; i < xvals.size(); i++) {
+		A(i, 0) = 1.0;
+	}
+
+	for (unsigned int j = 0; j < xvals.size(); j++) {
+		for (unsigned int i = 0; i < order; i++) {
+			A(j, i + 1) = A(j, i) * xvals[j];
+		}
+	}
+
+	auto Q = A.householderQr();
+	Eigen::VectorXd Yvals = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>(yvals.data(), yvals.size());
+	auto result = Q.solve(Yvals);
+	return result;
+}
+
+// Evaluate a polynomial.
+double polyeval(Eigen::VectorXd coeffs, double x) {
+	double result = 0.0;
+	for (unsigned int i = 0; i < coeffs.size(); i++) {
+		result += coeffs[i] * pow(x, i);
+	}
+	return result;
+}
+
 // Transform from Cartesian x,y coordinates to Frenet s,d coordinates
 vector<double> getFrenet(double x, double y, double theta, const vector<double> &maps_x, const vector<double> &maps_y)
 {
@@ -164,7 +200,79 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 }
 
-vector<double> lane_cost(double start_s, double ref_velocity, double cur_velocity, vector<vector<double>> sensor_fusion_sd_frame)
+vector<double> JMT(vector< double> start, vector <double> end, double T)
+{
+	/*
+	Calculate the Jerk Minimizing Trajectory that connects the initial state
+	to the final state in time T.
+
+	INPUTS
+
+	start - the vehicles start location given as a length three array
+	corresponding to initial values of [s, s_dot, s_double_dot]
+
+	end   - the desired end state for vehicle. Like "start" this is a
+	length three array.
+
+	T     - The duration, in seconds, over which this maneuver should occur.
+
+	OUTPUT
+	an array of length 6, each value corresponding to a coefficent in the polynomial
+	s(t) = a_0 + a_1 * t + a_2 * t**2 + a_3 * t**3 + a_4 * t**4 + a_5 * t**5
+
+	EXAMPLE
+
+	> JMT( [0, 10, 0], [10, 10, 0], 1)
+	[0.0, 10.0, 0.0, 0.0, 0.0, 0.0]
+	*/
+
+
+	//initial conditions
+	vector <double> alpha = { start[0], start[1], .5*start[2] };
+
+	double C1 = start[0] + T * start[1] + start[2] * pow(T, 2) / 2;
+	double C2 = start[1] + T * start[2];
+	double C3 = start[2];
+
+	Eigen::MatrixXd end_vec = Eigen::MatrixXd(3, 1);
+	end_vec << end[0] - C1,
+		end[1] - C2,
+		end[2] - C3;
+
+	Eigen::Matrix3d time_mat;
+	time_mat << pow(T, 3), pow(T, 4), pow(T, 5),
+		3 * pow(T, 2), 4 * pow(T, 3), 5 * pow(T, 4),
+		6 * pow(T, 1), 12 * pow(T, 2), 20 * pow(T, 3);
+
+	Eigen::MatrixXd alpha_end = time_mat.inverse() * end_vec;
+
+	for (int i = 0; i<alpha_end.size(); i++)
+		alpha.push_back(alpha_end.data()[i]);
+
+	/*for (int i = 0; i<alpha.size(); i++)
+	cout << alpha[i] << endl;*/
+	return alpha;
+
+}
+
+double JMT_eval(vector<double> alpha, double T)
+{
+	double eval = 0;
+	for (int i = 0; i < alpha.size(); i++)
+		eval += alpha[i] * pow(T, i);
+	return eval;
+}
+
+
+double JMT_eval_acc(vector<double> alpha, double T)
+{
+	double eval = 0;
+	for (int i = 2; i < alpha.size(); i++)
+		eval += i * (i-1) * alpha[i] * pow(T, i-2);
+	return eval;
+}
+
+vector<double> lane_cost(double start_s, double start_d, double ref_velocity, double cur_velocity, vector<vector<double>> sensor_fusion_sd_frame)
 {
 	//return cost of driving at each lane
 	vector<double> costs;
@@ -185,11 +293,14 @@ vector<double> lane_cost(double start_s, double ref_velocity, double cur_velocit
 		double s = start_s;
 		double car_velocity = 0.44704 * cur_velocity;
 
-		for (int t = 0; t < 10 ; t++)
+		for (int t = 0; t < 15 ; t++)
 		{
 			//integrate for 10 seconds 
 
 			s = start_s + t * car_velocity;
+
+			while (s > 6945.554)
+				s -= 6945.554;
 
 			if (car_velocity < ref_velocity)
 				car_velocity += 0.1;
@@ -197,20 +308,24 @@ vector<double> lane_cost(double start_s, double ref_velocity, double cur_velocit
 			for (int j = 0; j < sensor_fusion_sd_frame.size(); j++)
 			{
 				//iterate through cars
-
-				//linearly interpolate the position of each car
-				double s_v = sensor_fusion_sd_frame[j][0] + t * sensor_fusion_sd_frame[j][2];
+				double start_s_v = sensor_fusion_sd_frame[j][0];
 				double d_v = sensor_fusion_sd_frame[j][1];// +t * sensor_fusion_sd_frame[j][3];
 
-				if (s_v > 6945.554)
-					s_v -= 6945.554;
+				if ((start_s_v > start_s) || (fabs(d_v - start_d) > 2)) {
 
-				//if (fabs(s_v - s) < 5)
-				//	cout << j << "\t" << t << "\t" << (s_v - s) << "\t" << d_v << endl;
+					//linearly interpolate the position of each car
+					double s_v = sensor_fusion_sd_frame[j][0] + t * sensor_fusion_sd_frame[j][2];
 
-				//update PF
-				if (d_v > 0)
-					cost += w_v1 * exp(-w_v2 * pow(s - s_v, 2) - w_v3 * pow(d - d_v, 2));
+					while (s_v > 6945.554)
+						s_v -= 6945.554;
+
+					//if (fabs(s_v - s) < 5)
+					//	cout << j << "\t" << t << "\t" << (s_v - s) << "\t" << d_v << endl;
+
+					//update PF
+					if (d_v > 0)
+						cost += w_v1 * exp(-w_v2 * pow(s - s_v, 2) - w_v3 * pow(d - d_v, 2)) *exp(-0.005 * t * t);
+				}
 			
 			}
 		}
@@ -240,15 +355,18 @@ double desired_d(double car_d, vector<double> lane_cost)
 			desired_lane = i;
 		}
 	}
-	cout << desired_lane << endl;
+
 	//leaving a deadband for current lane
-	if ((min_lane_cost > (0.9 * car_lane_cost)) || ( (car_lane_cost - min_lane_cost) < 3 ))
+	if ((min_lane_cost > (0.8 * car_lane_cost)) || ( (car_lane_cost - min_lane_cost) < 5 ))
 		desired_lane = car_lane;	
-	cout << desired_lane << endl;
+
 	//in case double lane change is needed, make sure mid lane is safe
-	if ( (fabs(desired_lane - car_lane ) > 1 ) && (lane_cost[1] > lane_cost[car_lane] ) )
+	if ((fabs(desired_lane - car_lane) > 1) && (lane_cost[1] > 0.8 * lane_cost[car_lane]))
 		desired_lane = car_lane;
-	cout << desired_lane << endl;
+	else if ((fabs(desired_lane - car_lane) > 1) && (lane_cost[1] < 0.8 * lane_cost[car_lane]) && (lane_cost[desired_lane] > 0.8 * lane_cost[1]))
+		desired_lane = 1;
+
+
 	return 4 * desired_lane + 2;
 }
 
@@ -266,31 +384,39 @@ vector<vector<double>> trajectory(double s, double d, double desired_d, double r
 		{
 			car_velocity += 0.1;
 		}
+
 		for (int j = 0; j < sensor_fusion_sd_frame.size(); j++)
 		{
 			//iterate through cars
 
 			//linearly interpolate the position of each car
 			double s_v = sensor_fusion_sd_frame[j][0] + i * 0.02 * sensor_fusion_sd_frame[j][2];
-			double d_v = sensor_fusion_sd_frame[j][1] + i * 0.02 * sensor_fusion_sd_frame[j][3];
+			double d_v = sensor_fusion_sd_frame[j][1];// +i * 0.02 * sensor_fusion_sd_frame[j][3];
 
-			if (s_v > 6945.554)
+			while (s_v > 6945.554)
 				s_v -= 6945.554;
 
 			//update PF
-			if (s_v > s)
-			{
-				car_velocity += - 1.5 * exp(-0.005 * pow(s_v - s, 2)) * exp(-10 * pow(d_v - d, 2));
-			}
-
+			//if ( (s_v > s) && ( fabs(d_v-d) < 2 ) )
+			//	car_velocity += -1.5 * exp(-0.005 * pow(s_v - s, 2));// *exp(-10 * pow(d_v - d, 2));
+			if ( (s_v > s) && ((s_v - s) < 10) && (fabs(d_v - d) < 2))
+				car_velocity += -1.5 + 1.5*(s_v - s)/10;
 		}	
 
 		if (car_velocity < 0)
 			car_velocity = 0;
-		if ( fabs(desired_d - d) > 0.25 )
-			d += 0.5 * 0.02 * (desired_d - d) / fabs(desired_d - d);
+
+		/*if ( fabs(desired_d - d) > 1 )
+			d += 1 * 0.02 * (desired_d - d) / fabs(desired_d - d);
+		else 
+			d += 0.02 * (desired_d - d);*/
+
+		d += 0.02 * (desired_d - d);
 
 		s += car_velocity * 0.02;
+
+		while (s > 6945.554)
+			s -= 6945.554;
 
 		auto xy_point = getXY(s, d, maps_s, maps_x, maps_y);
 
@@ -300,8 +426,13 @@ vector<vector<double>> trajectory(double s, double d, double desired_d, double r
 	return xy_points;
 }
 
-double end_s, end_d, end_speed, avg_desired_d;
-int i2, i6, i10;
+double end_s, end_d, end_speed, d_target;
+int iteration = 0;
+//vector<double> speeds;
+int d_targets [3] = { 0, 0, 0 };
+double startacc_x = 0;
+double startacc_y = 0;
+vector<double> x_poly, y_poly;
 
 int main() {
   uWS::Hub h;
@@ -398,9 +529,11 @@ int main() {
 				/*cout << "ok" << endl;
 				cout << cur_d << "\t" << next_sd[1] << endl;
 				cout << "ok" << endl;*/
+				double cur_speed = sqrt( pow((double)sensor_fusion[i][3], 2) + pow((double)sensor_fusion[i][4], 2) );
 
 				sd_frame_components.push_back(cur_s);
 				sd_frame_components.push_back(cur_d);
+				sd_frame_components.push_back(cur_speed);
 				sd_frame_components.push_back(ds);
 				sd_frame_components.push_back(dd);
 				sensor_fusion_sd_frame.push_back(sd_frame_components);
@@ -408,14 +541,19 @@ int main() {
 
 			json msgJson;
 
+			vector<double> ptsx;
+			vector<double> ptsy;
+			vector<double> next_x;
+			vector<double> next_y;
 			vector<double> next_x_vals;
 			vector<double> next_y_vals;
 
 			for (int i = 0; i < previous_path_x.size(); i++)
 			{
-				next_x_vals.push_back(previous_path_x[i]);
-				next_y_vals.push_back(previous_path_y[i]);
+				next_x.push_back(previous_path_x[i]);
+				next_y.push_back(previous_path_y[i]);
 			}
+
 
 			if (previous_path_x.size() == 0) 
 			{
@@ -426,23 +564,112 @@ int main() {
 				end_speed = car_speed;
 			}
 
-			auto cost = lane_cost(car_s, 20, car_speed, sensor_fusion_sd_frame);
-			cout << cost[0] << "\t" << cost[1] << "\t" << cost[2] << endl;
-			double d_target = desired_d(end_d, cost);
-			cout << d_target << endl;
+			auto cost = lane_cost(car_s, car_d, 20, car_speed, sensor_fusion_sd_frame);
+			d_targets[(int)((desired_d(end_d, cost)-2) / 4)]++;
+			if ((iteration % 100 == 0))
+			{
+				int counter = 0;
+				for (int i = 0; i < 3; i++)
+				{
+					if (d_targets[i] > counter)
+					{
+						counter = d_targets[i];
+						d_target = i * 4 + 2;
+					}
+					d_targets[i] = 0;
+				}
+				cout << cost[0] << "\t" << cost[1] << "\t" << cost[2] << endl;
+				cout << d_targets[0] << "\t" << d_targets[1] << "\t" << d_targets[2] << endl;
+				cout << d_target << endl;
+			}
 			auto path = trajectory(end_s, end_d, d_target, 20, end_speed, sensor_fusion_sd_frame, previous_path_x.size(), map_waypoints_s, map_waypoints_x, map_waypoints_y);
 
-			end_s = path[path.size() - 1][0];
-			end_d = path[path.size() - 1][1];
-			end_speed = path[path.size() - 1][2];
+			iteration++;
+			if (path.size()) {
+				end_s = path[path.size() - 1][0];
+				end_d = path[path.size() - 1][1];
+				end_speed = path[path.size() - 1][2];
+			}
 
 			for (int i = 0; i < path.size(); i++)
 			{
-				next_x_vals.push_back(path[i][3]);
-				next_y_vals.push_back(path[i][4]);
+				next_x.push_back(path[i][3]);
+				next_y.push_back(path[i][4]);
+				//speeds.push_back(path[i][2]);
+				//if (speeds.size() > 50)
+				//	speeds.erase(speeds.begin());
 			}
 
+			vector<double> time;
+			cout << "start \t" << car_x << "\t" << car_y << endl;
+			for (int i = 0; i < next_x.size(); i++)
+			{
+				if ( ((i % 10) == 0) || (i==(next_x.size()-1)) )
+				{
+					ptsx.push_back(next_x[i]);
+					ptsy.push_back(next_y[i]);
+					cout << "fit \t" << next_x[i] << "\t" << next_y[i] << endl;
+					time.push_back((double)(i+1.0) * 0.02);
+				}
+			}
 
+			auto x_poly = polyfit(time, ptsx, 3);
+			auto y_poly = polyfit(time, ptsy, 3);
+			double final_yaw = atan2(next_y[next_x.size() - 1] - next_y[next_x.size() - 2], next_x[next_x.size() - 1] - next_x[next_x.size() - 2]);
+			vector<double> xstart = { car_x, car_speed*cos(car_yaw), startacc_x };
+			vector<double> xend = { next_x[next_x.size() - 1], end_speed*cos(final_yaw), 0};
+			//x_poly = JMT(xstart, xend, 0.02*(next_x.size()+1));
+			vector<double> ystart = { car_y, car_speed*sin(car_yaw), startacc_y };
+			vector<double> yend = { next_y[next_y.size() - 1], end_speed*sin(final_yaw), 0 };
+			//y_poly = JMT(ystart, yend, 0.02*(next_x.size() + 1));
+			double xcar, ycar;
+
+			for (int i = 1; i < 51; i++)
+			{
+				double t = (double)i * 0.02;
+				xcar = polyeval(x_poly, t);
+				ycar = polyeval(y_poly, t);
+
+				//xcar = JMT_eval(x_poly, t);
+				//ycar = JMT_eval(y_poly, t);
+				cout << "eval \t" << xcar << "\t" << ycar << endl;
+
+				next_x_vals.push_back(xcar);
+				next_y_vals.push_back(ycar);
+
+			}
+
+			/*
+			tk::spline spline;
+			
+			spline.set_points(ptsx, ptsy);
+
+			double target_x = 30;
+			double target_y = spline(target_x);
+			double target_dist = sqrt(target_x * target_x + target_y * target_y); 
+
+			double x_add_on = 0;
+
+			for (int i = 0; i < 50; i++)
+			{
+				//cout << "ref" << car_x << "\t" << spline(car_x) << "\t" << car_y;
+				//cout << "speed" << "\t" << speeds[i] << endl;
+				double N = target_dist / (0.02*speeds[i]);
+				double x_point = x_add_on + target_x / N;
+				double y_point = spline(x_point);
+
+				x_add_on = x_point;
+
+				//x_point += car_x;
+				//y_point += car_y;
+				//cout << x_point << "\t" << y_point << endl;
+				next_x_vals.push_back(car_x + (x_point*cos(car_yaw) + y_point*sin(car_yaw)));
+				next_y_vals.push_back(car_y + (x_point*sin(car_yaw) - y_point*cos(car_yaw)));
+				//cout << car_x + (x_point*cos(car_yaw) - y_point * sin(car_yaw)) << "\t" << car_y + (x_point*sin(car_yaw) + y_point * cos(car_yaw)) << "\t";
+			}
+			*/
+
+			
           	msgJson["next_x"] = next_x_vals;
           	msgJson["next_y"] = next_y_vals;
           	auto msg = "42[\"control\","+ msgJson.dump()+"]";
