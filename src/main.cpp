@@ -361,9 +361,9 @@ double desired_d(double car_d, vector<double> lane_cost)
 		desired_lane = car_lane;	
 
 	//in case double lane change is needed, make sure mid lane is safe
-	if ((fabs(desired_lane - car_lane) > 1) && (lane_cost[1] > 0.8 * lane_cost[car_lane]))
+	if ((fabs(desired_lane - car_lane) > 1) && (lane_cost[1] > 0.5 * lane_cost[car_lane]))
 		desired_lane = car_lane;
-	else if ((fabs(desired_lane - car_lane) > 1) && (lane_cost[1] < 0.8 * lane_cost[car_lane]) && (lane_cost[desired_lane] > 0.8 * lane_cost[1]))
+	else if ((fabs(desired_lane - car_lane) > 1) && (lane_cost[1] < 0.5 * lane_cost[car_lane]) && (min_lane_cost > 0.8 * lane_cost[1]) && ((lane_cost[1] - min_lane_cost) > 3))
 		desired_lane = 1;
 
 
@@ -411,7 +411,7 @@ vector<vector<double>> trajectory(double s, double d, double desired_d, double r
 		else 
 			d += 0.02 * (desired_d - d);*/
 
-		d += 0.02 * (desired_d - d);
+		d += 0.02 * (desired_d - d) * car_velocity / 20;
 
 		s += car_velocity * 0.02;
 
@@ -432,7 +432,11 @@ int iteration = 0;
 int d_targets [3] = { 0, 0, 0 };
 double startacc_x = 0;
 double startacc_y = 0;
+double ref_velocity = 22;
+double max_acc = 10;
 vector<double> x_poly, y_poly;
+double last_vel_x, last_vel_y, prev_vel_x = 0, prev_vel_y = 0, last_acc_x, last_acc_y, last_speed, last_acc;
+
 
 int main() {
   uWS::Hub h;
@@ -570,7 +574,7 @@ int main() {
 
 			auto cost = lane_cost(car_s, car_d, 20, car_speed, sensor_fusion_sd_frame);
 			d_targets[(int)((desired_d(end_d, cost)-2) / 4)]++;
-			if ((iteration % 100 == 0))
+			if ((iteration % 50 == 0))
 			{
 				int counter = 0;
 				for (int i = 0; i < 3; i++)
@@ -583,10 +587,9 @@ int main() {
 					d_targets[i] = 0;
 				}
 				cout << cost[0] << "\t" << cost[1] << "\t" << cost[2] << endl;
-				cout << d_targets[0] << "\t" << d_targets[1] << "\t" << d_targets[2] << endl;
 				cout << d_target << endl;
 			}
-			auto path = trajectory(end_s, end_d, d_target, 20, end_speed, sensor_fusion_sd_frame, previous_path_x.size(), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+			auto path = trajectory(end_path_s, end_d, d_target, ref_velocity, end_speed, sensor_fusion_sd_frame, previous_path_x.size(), map_waypoints_s, map_waypoints_x, map_waypoints_y);
 
 			iteration++;
 			if (path.size()) {
@@ -607,7 +610,7 @@ int main() {
 			vector<double> time;
 			for (int i = 0; i < next_x.size(); i++)
 			{
-				if ( ((i % 7) == 0) || (i==(next_x.size()-1)) )
+				if ( ((i % 10) == 0) || (i==(next_x.size()-1)) )
 				{
 					ptsx.push_back(next_x[i]);
 					ptsy.push_back(next_y[i]);
@@ -626,11 +629,11 @@ int main() {
 			//}
 			double final_yaw = atan2(next_y[next_x.size() - 1] - next_y[next_x.size() - 2], next_x[next_x.size() - 1] - next_x[next_x.size() - 2]);
 
-			vector<double> xstart = { car_x, 0.44704*car_speed*cos(deg2rad(car_yaw)), startacc_x };
-			vector<double> xend = { next_x[next_x.size() - 1], end_speed*cos(final_yaw), 0};
+			//vector<double> xstart = { car_x, 0.44704*car_speed*cos(deg2rad(car_yaw)), startacc_x };
+			//vector<double> xend = { next_x[next_x.size() - 1], end_speed*cos(final_yaw), 0};
 			//x_poly = JMT(xstart, xend, 0.02*(next_x.size()));
-			vector<double> ystart = { car_y, 0.44704*car_speed*sin(deg2rad(car_yaw)), startacc_y };
-			vector<double> yend = { next_y[next_y.size() - 1], end_speed*sin(final_yaw), 0 };
+			//vector<double> ystart = { car_y, 0.44704*car_speed*sin(deg2rad(car_yaw)), startacc_y };
+			//vector<double> yend = { next_y[next_y.size() - 1], end_speed*sin(final_yaw), 0 };
 			//y_poly = JMT(ystart, yend, 0.02*(next_x.size()));
 			double xcar, ycar;
 			//cout << "speeds" << car_speed * cos(deg2rad(car_yaw)) << "\t" << end_speed * cos(final_yaw) << "\t" << car_speed * cos(deg2rad(car_yaw)) << "\t" << end_speed * sin(final_yaw) << endl;
@@ -640,7 +643,48 @@ int main() {
 				double t = (double)i * 0.02;
 				xcar = polyeval(x_poly, t);
 				ycar = polyeval(y_poly, t);
-
+				
+				if (next_x_vals.size() > 1) {
+					last_vel_x = (xcar - next_x_vals[next_x_vals.size() - 1])/0.02;
+					last_vel_y = (ycar - next_y_vals[next_y_vals.size() - 1])/0.02;
+				}
+				else {
+					last_vel_x = (xcar - car_x)/0.02;
+					last_vel_y = (ycar - car_y)/0.02;
+				}
+				//cout << "1 \t" << last_vel_x << "\t" << last_vel_y << endl;
+				last_speed = sqrt(pow(last_vel_x, 2) + pow(last_vel_y, 2));
+				//cout << last_speed << endl;
+				if (last_speed > ref_velocity) {
+					last_vel_x = last_vel_x * ref_velocity / last_speed;
+					last_vel_y = last_vel_y * ref_velocity / last_speed;
+				}
+				//cout << "2 \t" << last_vel_x << "\t" << last_vel_y << endl;
+				
+				last_acc_x = (last_vel_x - prev_vel_x) / 0.02;
+				last_acc_y = (last_vel_y - prev_vel_y) / 0.02;
+				last_acc = sqrt(pow(last_acc_x, 2) + pow(last_acc_y, 2));
+				cout << "1 \t" << last_vel_x << "\t" << last_vel_y << endl;
+				if (last_acc > max_acc) {
+					last_acc_x = last_acc_x * max_acc / last_acc;
+					last_acc_y = last_acc_y * max_acc / last_acc;
+					last_vel_x = prev_vel_x + 0.02 * last_acc_x;
+					last_vel_y = prev_vel_y + 0.02 * last_acc_y; 
+				}
+				prev_vel_x = last_vel_x;
+				prev_vel_y = last_vel_y;
+				cout << "2 \t" << last_vel_x << "\t" << last_vel_y << endl;
+				
+				if (next_x_vals.size() > 1) {
+					xcar = next_x_vals[next_x_vals.size() - 1] + last_vel_x * 0.02;
+					ycar = next_y_vals[next_y_vals.size() - 1] + last_vel_y * 0.02;
+				}
+				else {
+					xcar = car_x + last_vel_x * 0.02;
+					ycar = car_y + last_vel_y * 0.02;
+				}
+				
+					
 				//xcar = JMT_eval(x_poly, t);
 				//ycar = JMT_eval(y_poly, t);
 
