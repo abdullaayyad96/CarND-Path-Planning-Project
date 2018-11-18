@@ -605,7 +605,7 @@ int main() {
 			vector<double> time;
 			for (int i = 0; i < next_x.size(); i++)
 			{
-				if ( ((i % 1) == 0) || (i==(next_x.size()-1)) )
+				if ( ((i % 25) == 0) || (i==(next_x.size()-1)) )
 				{
 					ptsx.push_back(next_x[i]);
 					ptsy.push_back(next_y[i]);
@@ -616,8 +616,8 @@ int main() {
 				}
 			}
 
-			auto x_poly = polyfit(time, ptsx, 3);
-			auto y_poly = polyfit(time, ptsy, 3);
+			auto x_poly = polyfit(time, ptsx, 2);
+			auto y_poly = polyfit(time, ptsy, 2);
 			/*auto xypoly = polyfit(ptsx, ptsy, 3);
 
 			double start_x;
