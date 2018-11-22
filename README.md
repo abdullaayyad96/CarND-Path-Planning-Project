@@ -1,7 +1,11 @@
 # CarND-Path-Planning-Project
 Self-Driving Car Engineer Nanodegree Program
+
+---
+
 [//]: # (Picture Definition)
 [cost]: https://user-images.githubusercontent.com/37302013/48884687-e02f3600-ee68-11e8-89f4-5d2d9961a411.png
+[frenet]: https://user-images.githubusercontent.com/37302013/48889248-8c2c4d80-ee78-11e8-9d3d-71ba9f0afaea.png
 
 ## Project Discription
 
@@ -11,7 +15,7 @@ This project is part of UDacity's Self-Driving Car Engineer Nanodegree Program. 
 You can download the Term3 Simulator which contains the Path Planning Project from the [releases tab (https://github.com/udacity/self-driving-car-sim/releases/tag/T3_v1.2).
 
 ### Goals
-In this project your goal is to safely navigate around a virtual highway with other traffic that is driving +-10 MPH of the 50 MPH speed limit. You will be provided the car's localization and sensor fusion data, there is also a sparse map list of waypoints around the highway. The car should try to go as close as possible to the 50 MPH speed limit, which means passing slower traffic when possible, note that other cars will try to change lanes too. The car should avoid hitting other cars at all cost as well as driving inside of the marked road lanes at all times, unless going from one lane to another. The car should be able to make one complete loop around the 6946m highway. Since the car is trying to go 50 MPH, it should take a little over 5 minutes to complete 1 loop. Also the car should not experience total acceleration over 10 m/s^2 and jerk that is greater than 10 m/s^3.
+In this project, the goal is to safely navigate around a virtual highway with other traffic that is driving +-10 MPH of the 50 MPH speed limit. The path planner is provided with the car's localization and sensor fusion data, there is also a sparse map list of waypoints around the highway. The car should try to go as close as possible to the 50 MPH speed limit, which means passing slower traffic when possible, note that other cars will try to change lanes too. The car should avoid hitting other cars at all cost as well as driving inside of the marked road lanes at all times, unless going from one lane to another. The car should be able to make one complete loop around the 6946m highway. Since the car is trying to go 50 MPH, it should take a little over 5 minutes to complete 1 loop. Also the car should not experience total acceleration over 10 m/s^2 and jerk that is greater than 10 m/s^3.
 
 #### The map of the highway is in data/highway_map.txt
 Each waypoint in the list contains  [x,y,s,dx,dy] values. x and y are the waypoint's map coordinate position, the s value is the distance along the road to get to that waypoint in meters, the dx and dy values define the unit normal vector pointing outward of the highway loop.
@@ -25,7 +29,7 @@ The highway's waypoints loop around so the frenet s value, distance along the ro
 3. Compile: `cmake .. && make`
 4. Run it: `./path_planning`.
 
-Here is the data provided from the Simulator to the C++ Program
+Here is the data provided from the Simulator to the C++ Path Planner Program
 
 #### Main car's localization Data (No Noise)
 
@@ -89,28 +93,57 @@ the path has processed since last time.
     git checkout e94b6e1
     ```
 
-## Editor Settings
-
-We've purposefully kept editor configuration files out of this repo in order to
-keep it as simple and environment agnostic as possible. However, we recommend
-using the following settings:
-
-* indent using spaces
-* set tab width to 2 spaces (keeps the matrices in source code aligned)
-
 ## Project Instructions and Rubric
 
 The project has been developed to follow this [rubric](https://review.udacity.com/#!/rubrics/1971/view).
 
+---
+
 ## Trajectory Generation Methodology
 
-While driving in a highway might seem simple at first glance, a deeper look unfolds the complixity of the problem. The main challenges manifest due to the existance of the other vehicles that can obstract the vehicle's progress raising the need for a prediction and behavior planning steps to determine the most appropriate lane and speed to drive at. Once these are determined, a safe and executable trajectory should be determined for the vehicle to follow.
+While driving in a highway might seem simple at first glance, a deeper look unfolds the complexity of the problem. The main challenges manifest due to the existence of the other vehicles that can obstruct the vehicle's progress raising the need for a prediction and behavior planning steps to determine the most appropriate lane and speed to drive at. Once these are determined, a safe and executable trajectory should be determined for the vehicle to follow.
 
-My approach devides these process into four main steps discussed below:
+My approach divides these process into four main steps discussed below:
 
 ### Lane Cost Calculation:
 
-Determining the best lane to drive at first requires a criterea for numerically evaluating the appropriatness of each lane. For this purpose an exponential cost function has been developed as:
+Determining the best lane to drive at first requires a criteria for numerically evaluating the appropriateness of each lane. For this purpose, an exponential cost function has been developed as:
 
 ![cost_function][cost]
+
+s: target vehicle frenet s value
+d: target vehicle frenet d value
+s_v: other vehicles in the road frenet s value
+d_v: other vehicles in the road frenet d value
+w1, w2, w3, w4: weights
+
+(for brief description of frenet coordinates, check final section)
+
+The cost function clearly penalizes driving near other vehicles in the road by incorporating the difference in the frenet coordinates. In order to calculate the cost of driving at each lane, the calculation is repeated several times with varying the d value to represent driving at the center of each lane.
+
+A time horizon was also implemented as a way of allowing a form of future prediction. This means that the position of all vehicles need to be updated as time progresses. This is done by linearly interpolating the position of other vehicles based on their last measured velocity. While for the target vehicle, the position is updated as if the vehicle is accelerating towards the target speed. While this prediction is straightforward and does not predict complex behaviors of other vehicles, it provides very good results as it's iteratively applied with a short time constant.
+
+Finally, another exponential term related to time is added so that higher priority is given to the closest time steps as opposed to the furthest time steps which can be compensated for by future predictions and behavior planning.
+
+This sub-process is implemented in the lane_cost function in lines 235-310 of "srs/main.cpp".
+
+### Determining desired lane
+
+The second step of the path planning algorithm is deciding which path is best to drive at which is the most straightforward step of the algorithm. First, the lane costs calculated from the previous steps are averaged over the number of times they have been calculated. The averaged lane costs are then used to determine which lane is most appropriate. This included ensuring that lane changes are safe, determining the feasibility and worthiness of lane changes and ensuring that lane changes are applied one lane at a time. This is implemented in desired_d function in lines 313-345 of "srs/main.cpp".
+
+### Waypoint generation
+
+Once a desired lane is determined, a rough trajectory is generated in order to move the car to that lane while accelerating to the desired speed. The generated waypoints also need to ensure that car does not collide with other vehicle on the road. Initially, these waypoints are generated in frenet coordinates and then converted to cartessian coordinates. It's worth noting that at every iteration, some remaining waypoints from the last generated path are taken into account and the new waypoints are simply aggregated. Most of this part is implemented in the waypoints function in lines 350-402 of "srs/main.cpp". While the waypoints transfer from previous path are impelemented in lines 531-543.
+
+### Smoothening the waypoints with polynomial fitting
+
+The last step is smoothening the waypoints. The main reason why smoothening is needed is because in the previous steps, waypoint generation is first done in frenet and then converted to cartesian coordinates. This leads to the generated path being indifferentiable at some points. This causes very high and unrealistic accelerations at times. Therefore, several waypoints are selected and fitted into second order polynomials ensuring a continuously differentiable trajectory/path. Waypoints are then sampled from these polynomials with a 0.02s time difference and fed to the simulator. These steps are implemented in lines 690-770 of "srs/main.cpp" and conclude the implementation of the path planner.
+
+---
+
+## Frenet Coordinates
+
+Frenet coordinates are heavily used throughout my implementation of the code. The basic concept of frenet coordinates is very simple with the "s" values representing the distance traveled along the road regardless of its shape while the "d" value represents the distance from the center of the road. A simple visualization on the differance between cartesian coordinates (left picture) and frenet coordinates (right picture) can be seen below:
+
+![frenet_cor][frenet]
 
