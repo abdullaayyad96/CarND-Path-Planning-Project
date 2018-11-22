@@ -19,6 +19,10 @@ constexpr double pi() { return M_PI; }
 double deg2rad(double x) { return x * pi() / 180; }
 double rad2deg(double x) { return x * 180 / pi(); }
 
+//maximum frenet s value of the highway
+#define max_s 6945.554
+
+
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
 // else the empty string "" will be returned.
@@ -34,10 +38,15 @@ string hasData(string s) {
   return "";
 }
 
+
+//calculate distance between two points
 double distance(double x1, double y1, double x2, double y2)
 {
 	return sqrt((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1));
 }
+
+
+//Find closest waypoint to specific point in map
 int ClosestWaypoint(double x, double y, const vector<double> &maps_x, const vector<double> &maps_y)
 {
 
@@ -58,9 +67,10 @@ int ClosestWaypoint(double x, double y, const vector<double> &maps_x, const vect
 	}
 
 	return closestWaypoint;
-
 }
 
+
+//Find next waypoint to specific point and orientation in map
 int NextWaypoint(double x, double y, double theta, const vector<double> &maps_x, const vector<double> &maps_y)
 {
 
@@ -85,6 +95,7 @@ int NextWaypoint(double x, double y, double theta, const vector<double> &maps_x,
 
   return closestWaypoint;
 }
+
 
 // Fit a polynomial.
 // Adapted from
@@ -112,6 +123,7 @@ Eigen::VectorXd polyfit(vector<double> xvals, vector<double> yvals,	int order) {
 	return result;
 }
 
+
 // Evaluate a polynomial.
 double polyeval(Eigen::VectorXd coeffs, double x) {
 	double result = 0.0;
@@ -121,57 +133,9 @@ double polyeval(Eigen::VectorXd coeffs, double x) {
 	return result;
 }
 
-// Transform from Cartesian x,y coordinates to Frenet s,d coordinates
-vector<double> getFrenet(double x, double y, double theta, const vector<double> &maps_x, const vector<double> &maps_y)
-{
-	int next_wp = NextWaypoint(x,y, theta, maps_x,maps_y);
-
-	int prev_wp;
-	prev_wp = next_wp-1;
-	if(next_wp == 0)
-	{
-		prev_wp  = maps_x.size()-1;
-	}
-
-	double n_x = maps_x[next_wp]-maps_x[prev_wp];
-	double n_y = maps_y[next_wp]-maps_y[prev_wp];
-	double x_x = x - maps_x[prev_wp];
-	double x_y = y - maps_y[prev_wp];
-
-	// find the projection of x onto n
-	double proj_norm = (x_x*n_x+x_y*n_y)/(n_x*n_x+n_y*n_y);
-	double proj_x = proj_norm*n_x;
-	double proj_y = proj_norm*n_y;
-
-	double frenet_d = distance(x_x,x_y,proj_x,proj_y);
-
-	//see if d value is positive or negative by comparing it to a center point
-
-	double center_x = 1000-maps_x[prev_wp];
-	double center_y = 2000-maps_y[prev_wp];
-	double centerToPos = distance(center_x,center_y,x_x,x_y);
-	double centerToRef = distance(center_x,center_y,proj_x,proj_y);
-
-	if(centerToPos <= centerToRef)
-	{
-		frenet_d *= -1;
-	}
-
-	// calculate s value
-	double frenet_s = 0;
-	for(int i = 0; i < prev_wp; i++)
-	{
-		frenet_s += distance(maps_x[i],maps_y[i],maps_x[i+1],maps_y[i+1]);
-	}
-
-	frenet_s += distance(0,0,proj_x,proj_y);
-
-	return {frenet_s,frenet_d};
-
-}
 
 // Transform from Cartesian x,y coordinates to Frenet s,d coordinates
-vector<double> getFrenetss(double x, double y, double dx, double dy, double theta, const vector<double> &maps_x, const vector<double> &maps_y)
+vector<double> getFrenet(double x, double y, double dx, double dy, double theta, const vector<double> &maps_x, const vector<double> &maps_y)
 {
 	int next_wp = NextWaypoint(x, y, theta, maps_x, maps_y);
 
@@ -192,15 +156,18 @@ vector<double> getFrenetss(double x, double y, double dx, double dy, double thet
 	double proj_x = proj_norm * n_x;
 	double proj_y = proj_norm * n_y;
 
+	//distance from projection
+	double frenet_d = distance(x_x, x_y, proj_x, proj_y);
+
+	//find the projection of dx onto n
 	double dproj_norm = (dx*n_x + dy * n_y) / (n_x*n_x + n_y * n_y);
 	double dproj_x = dproj_norm * n_x;
 	double dproj_y = dproj_norm * n_y;
 
-	double frenet_d = distance(x_x, x_y, proj_x, proj_y);
+	//rate of change of distance from projection
 	double frenet_dd = distance(dx, dy, dproj_x, dproj_y);
 
 	//see if d value is positive or negative by comparing it to a center point
-
 	double center_x = 1000 - maps_x[prev_wp];
 	double center_y = 2000 - maps_y[prev_wp];
 	double centerToPos = distance(center_x, center_y, x_x, x_y);
@@ -211,6 +178,7 @@ vector<double> getFrenetss(double x, double y, double dx, double dy, double thet
 		frenet_d *= -1;
 	}
 
+	//see if dd value is positive or negative by comparing it to a center point
 	double dcenterToPos = distance(center_x, center_y, dx, dy);
 	double dcenterToRef = distance(center_x, center_y, dproj_x, dproj_y);
 
@@ -228,11 +196,12 @@ vector<double> getFrenetss(double x, double y, double dx, double dy, double thet
 
 	frenet_s += distance(0, 0, proj_x, proj_y);
 
+	//calculate ds value
 	double frenet_ds = distance(0, 0, dproj_x, dproj_y);
 
 	return { frenet_s, frenet_d, frenet_ds, frenet_dd };
-
 }
+
 
 // Transform from Frenet s,d coordinates to Cartesian x,y
 vector<double> getXY(double s, double d, const vector<double> &maps_s, const vector<double> &maps_x, const vector<double> &maps_y)
@@ -259,82 +228,95 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 	double y = seg_y + d*sin(perp_heading);
 
 	return {x,y};
-
 }
 
 
+//calculate cost of driving at each of the three lanes of the highway
 vector<double> lane_cost(double start_s, double start_d, double ref_velocity, double cur_velocity, vector<vector<double>> sensor_fusion_sd_frame)
 {
-	//return cost of driving at each lane
 	vector<double> costs;
 
-	//Construct cost function
-	//CF =   summation of w_v1 exp(- w_v2 * (s - s_v)^2  - w_v3 * (d - d_v)^2 ) for every vehicle
+	//Cost function of driving at each lane
+	//CF =   time integration from 0 to 15 ( summation of all vehciles ( w1 * exp( - w2 * delta_s^2 - w3 * delta_d^2) ) exp(- w4 * t^2) )
+	//This cost function penalizes driving near vehicles as time progresses
 
-	double w_v1 = 10;
-	double w_v2 = 0.05;
-	double w_v3 = 0.3;
+	//initializing weights in the cost function
+	double w1 = 10;
+	double w2 = 0.05;
+	double w3 = 0.3;
+	double w4 = 0.003;
 	
 
+	//interate through lanes
 	for (int i = 0 ; i < 3 ; i++)
 	{
-		//iterate through lanes
-		double d = 4 * i + 2;
-		double cost = 0;
-		double s = start_s;
-		double car_velocity = 0.44704 * cur_velocity;
 
+		double d = 4 * i + 2; //frenet d value of driving at the center of the lane
+
+		double cost = 0; //initialize cost
+		double s = start_s; //initial frenet s value
+		double car_velocity = 0.44704 * cur_velocity; //initial car velocity (converted from mph to m/s)
+		
+		//integrate over time as vehicles movement progresses
 		for (int t = 0; t < 15 ; t++)
 		{
-			//integrate for 10 seconds 
+			//reset s value if it exceeds max value
+			while (s > max_s)
+				s -= max_s;
 
-			s = start_s + t * car_velocity;
-
-			while (s > 6945.554)
-				s -= 6945.554;
-
-			if (car_velocity < ref_velocity)
-				car_velocity += 0.1;
-			
+			//iterate through all detected vehicles
 			for (int j = 0; j < sensor_fusion_sd_frame.size(); j++)
 			{
-				//iterate through cars
-				double start_s_v = sensor_fusion_sd_frame[j][0];
-				double d_v = sensor_fusion_sd_frame[j][1];// +t * sensor_fusion_sd_frame[j][3];
+				
+				//initial values of other vehicles in frenet coordinates
+				double start_s_v = sensor_fusion_sd_frame[j][0]; 
+				double start_d_v = sensor_fusion_sd_frame[j][1];
+				
+				//ignoring car on the other side of the road
+				if (start_d_v > 0)
+				{
+					//ignoring cars behind our vehicle in the same lane
+					if ((start_s_v > start_s) || (fabs(start_d_v - start_d) > 1)) {
 
-				if ((start_s_v > start_s) || (fabs(d_v - start_d) > 1)) {
+						//linearly interpolate the position of each car
+						double s_v = sensor_fusion_sd_frame[j][0] + t * sensor_fusion_sd_frame[j][2];
+						double d_v = sensor_fusion_sd_frame[j][1] + t * sensor_fusion_sd_frame[j][3];
 
-					//linearly interpolate the position of each car
-					double s_v = sensor_fusion_sd_frame[j][0] + t * sensor_fusion_sd_frame[j][2];
+						while (s_v > max_s)
+							s_v -= max_s;
 
-					while (s_v > 6945.554)
-						s_v -= 6945.554;
-
-					//if (fabs(s_v - s) < 5)
-					//	cout << j << "\t" << t << "\t" << (s_v - s) << "\t" << d_v << endl;
-
-					//update PF
-					if (d_v > 0)
-						cost += w_v1 * exp(-w_v2 * pow(s - s_v, 2) - w_v3 * pow(d - d_v, 2)) *exp(-0.003 * t * t);
+						//update cost function
+						cost += w1 * exp(-w2 * pow(s - s_v, 2) - w3 * pow(d - d_v, 2)) * exp(- w4 * t * t);
+					}
 				}
 			
 			}
+			
+			//update position of car assuming its accelerating towards reference velocity
+			s += car_velocity;
+			if (car_velocity < ref_velocity)
+			{
+				car_velocity += 5;
+				s += 0.5 * 5;
+			}
 		}
-		//cout << d << "\t" << cost << endl;
+
 		costs.push_back(cost);
-		
 	}
+	
+	//return vector of cost of each lane
 	return costs;
 }
 
 
+//determine best lane and frenet d value to drive on based on cost of each lane
 double desired_d(double car_d, vector<double> lane_cost)
 {
-	//return desired d value for a lane
-
-	int car_lane = (int)car_d / 4;
+	//properties of current lane
+	int car_lane = (int)car_d / 4; 
 	double car_lane_cost = lane_cost[car_lane];
 
+	//find minimum cost lane
 	int desired_lane;
 	double min_lane_cost = std::numeric_limits<double>::infinity();
 
@@ -347,75 +329,70 @@ double desired_d(double car_d, vector<double> lane_cost)
 		}
 	}
 
-	//leaving a deadband for current lane
+	//in case double lane change is needed, transfer to mid lane first
+	if (fabs(desired_lane - car_lane) > 1)
+	{
+		desired_lane = car_lane + (desired_lane - car_lane) / fabs(desired_lane - car_lane);
+		min_lane_cost = lane_cost[desired_lane];
+	}
+
+	//leaving a deadband (as value and precentage) for current lane and ensure lane transfer is safe
 	if ((min_lane_cost > (0.5 * car_lane_cost)) || ( (car_lane_cost - min_lane_cost) < 4 ) || (min_lane_cost > 10))
 		desired_lane = car_lane;	
 
-	//in case double lane change is needed, make sure mid lane is safe
-	if ((fabs(desired_lane - car_lane) > 1) && ((lane_cost[1] > 0.5 * car_lane_cost) || ((car_lane_cost - lane_cost[1]) < 4) || (lane_cost[1] > 10)))
-		desired_lane = car_lane;
-	else if (fabs(desired_lane - car_lane) > 1)
-		desired_lane = 1;
-	//else if ((fabs(desired_lane - car_lane) > 1) && ( (min_lane_cost > 0.5 * lane_cost[1]) || ((lane_cost[1] - min_lane_cost) < 2)) )
-	//	desired_lane = 1;
-
-
+	//return desired frenet d value
 	return 4 * desired_lane + 2;
 }
 
-vector<vector<double>> trajectory(double s, double d, double desired_d, double ref_velocity, double car_velocity, vector<vector<double>> sensor_fusion_sd_frame, int start_point, const vector<double> &maps_s, const vector<double> &maps_x, const vector<double> &maps_y)
+
+
+//generate waypoints based on current frenet position and desired lane and velocity
+vector<vector<double>> waypoints(double s, double d, double desired_d, double ref_velocity, double car_velocity, vector<vector<double>> sensor_fusion_sd_frame, int start_point, const vector<double> &maps_s, const vector<double> &maps_x, const vector<double> &maps_y)
 {
-	vector<vector<double>> xy_points;
-
-	double w_v1 = 100;
-	double w_v2 = 0.05;
-	double w_v3 = 1;
-
+	vector<vector<double>> xy_points; //vector for x and y points of the desired trajectory
+	
+	//start from previous path end point to reach 50 way points
 	for (int i = start_point; i < 50; i++)
 	{
-		double acc_status = 0; //-1--> deaccelerate, 0--> keep speed, 1--> accelerate
+		double acc_status = 0; //acceleration status: -1--> deaccelerate, 0--> keep speed, 1--> accelerate
+
 		if (car_velocity < ref_velocity)
 			acc_status = 1;
 
+		//iterate through cars to ensure safe waypoints
 		for (int j = 0; j < sensor_fusion_sd_frame.size(); j++)
 		{
-			//iterate through cars
 
 			//linearly interpolate the position of each car
 			double s_v = sensor_fusion_sd_frame[j][0] + i * 0.02 * sensor_fusion_sd_frame[j][2];
-			double d_v = sensor_fusion_sd_frame[j][1];// +i * 0.02 * sensor_fusion_sd_frame[j][3];
+			double d_v = sensor_fusion_sd_frame[j][1] + i * 0.02 * sensor_fusion_sd_frame[j][3];
 
-			while (s_v > 6945.554)
-				s_v -= 6945.554;
+			//limit frenet s value
+			while (s_v > max_s)
+				s_v -= max_s;
 
-			//update PF
-			//if ( (s_v > s) && ( fabs(d_v-d) < 2 ) )
-			//	car_velocity += -1.5 * exp(-0.005 * pow(s_v - s, 2));// *exp(-10 * pow(d_v - d, 2));
+			//determine acceleration status based on vehicles around
 			if ((s_v > s) && ((s_v - s) < 25) && (fabs(d_v - d) < 2))
 			{
 				acc_status = 0;
-				if ( ((s_v - s) < 20) && (car_velocity > sensor_fusion_sd_frame[j][2]))
+ 				if ( ((s_v - s) < 20) && (car_velocity > sensor_fusion_sd_frame[j][2]))
 					acc_status = -1;
 			}
 		}	
 
+		//accelerate car in s direction
 		car_velocity += (acc_status * 0.1);
-
 		if (car_velocity < 0)
 			car_velocity = 0;
-
-		/*if ( fabs(desired_d - d) > 1 )
-			d += 1 * 0.02 * (desired_d - d) / fabs(desired_d - d);
-		else 
-			d += 0.02 * (desired_d - d);*/
-
-		d += 0.02 * (desired_d - d) * car_velocity / 20;
-
+		
+		//up waypoints s and d values
 		s += car_velocity * 0.02;
+		d += 0.02 * (desired_d - d) * car_velocity / 20;
+		
+		while (s > max_s)
+			s -= max_s;
 
-		while (s > 6945.554)
-			s -= 6945.554;
-
+		//convert to cartessian coordinates and add to waypoint vector
 		auto xy_point = getXY(s, d, maps_s, maps_x, maps_y);
 
 		xy_points.push_back({ s, d, car_velocity, xy_point[0], xy_point[1] });
@@ -424,17 +401,47 @@ vector<vector<double>> trajectory(double s, double d, double desired_d, double r
 	return xy_points;
 }
 
-double end_s, end_d, end_speed, d_target;
-int iteration = 0;
-vector<double> speeds;
-vector<double> accum_lane_cost = { 0, 0, 0 };
-double startacc_x = 0;
-double startacc_y = 0;
-double ref_velocity = 22;
-double max_acc = 10;
-vector<double> x_poly, y_poly;
-double last_vel_x, last_vel_y, prev_vel_x = 0, prev_vel_y = 0, last_acc_x, last_acc_y, last_speed, last_acc;
+//convert sensor fusion data from cartessian to frenet to find ds and dd
+vector<vector<double>> convert_sensor_fusion(vector<vector<double>> sensor_fusion, const vector<double> &maps_x, const vector<double> &maps_y)
+{
+	vector<vector<double>> sensor_fusion_sd_frame;
 
+	//iterate through detected vehicles
+	for (int i = 0; i < sensor_fusion.size(); i++)
+	{
+		vector<double> sd_frame_components;
+
+		double cur_x = sensor_fusion[i][1];
+		double cur_y = sensor_fusion[i][2];
+		double cur_dx = sensor_fusion[i][3];
+		double cur_dy = sensor_fusion[i][4];
+		double cur_s = sensor_fusion[i][5];
+		double cur_d = sensor_fusion[i][6];
+
+		double cur_yaw = atan2(cur_dy, cur_dx);
+
+		auto cur_sd = getFrenet(cur_x, cur_y, cur_dx, cur_dy, cur_yaw, maps_x, maps_y);
+
+		double ds = cur_sd[2];
+		double dd = cur_sd[3];
+		
+		sd_frame_components.push_back(cur_s);
+		sd_frame_components.push_back(cur_d);
+		sd_frame_components.push_back(ds);
+		sd_frame_components.push_back(dd);
+
+		sensor_fusion_sd_frame.push_back(sd_frame_components);
+	}
+
+	return sensor_fusion_sd_frame;
+}
+
+//global variables
+double end_s, end_d, end_speed; //final frenet coordinates and speed of last point on previous path
+double d_target; //target frenet d value
+int iteration = 0; //number of iteration
+vector<double> accum_lane_cost = { 0, 0, 0 }; //accumulated lane cost
+double ref_velocity = 22; //reference velocity
 
 int main() {
   uWS::Hub h;
@@ -448,8 +455,6 @@ int main() {
 
   // Waypoint map to read from
   string map_file_ = "../data/highway_map.csv";
-  // The max s value before wrapping around the track back to 0
-  double max_s = 6945.554;
 
   ifstream in_map_(map_file_.c_str(), ifstream::in);
 
@@ -510,106 +515,80 @@ int main() {
 			// Sensor Fusion Data, a list of all other cars on the same side of the road.
 			auto sensor_fusion = j[1]["sensor_fusion"];
 
-			//calculate ds and dd for each car in sensor_fusion
-			vector<vector<double>> sensor_fusion_sd_frame;
 
-			for (int i = 0; i < sensor_fusion.size(); i++)
-			{
-				vector<double> sd_frame_components;
-
-				double cur_x = sensor_fusion[i][1];
-				double cur_y = sensor_fusion[i][2];
-				double cur_dx = sensor_fusion[i][3];
-				double cur_dy = sensor_fusion[i][4];
-				double cur_s = sensor_fusion[i][5];
-				double cur_d = sensor_fusion[i][6];
-
-				double cur_yaw = atan2(cur_dy, cur_dx);
-
-				auto cur_sd = getFrenetss(cur_x, cur_y, cur_dx, cur_dy, cur_yaw, map_waypoints_x, map_waypoints_y);
-
-				double ds = cur_sd[2];
-				double dd = cur_sd[3];
-
-				/*cout << "ok" << endl;
-				cout << cur_d << "\t" << next_sd[1] << endl;
-				cout << "ok" << endl;*/
-				double cur_speed = sqrt( pow((double)sensor_fusion[i][3], 2) + pow((double)sensor_fusion[i][4], 2) );
-
-				sd_frame_components.push_back(cur_s);
-				sd_frame_components.push_back(cur_d);
-				sd_frame_components.push_back(cur_speed);
-				sd_frame_components.push_back(ds);
-				sd_frame_components.push_back(dd);
-				sensor_fusion_sd_frame.push_back(sd_frame_components);
-			}
+			//convert sensor fusion data to frenet coordinates (to find ds and dt)
+			auto sensor_fusion_sd_frame = convert_sensor_fusion(sensor_fusion, map_waypoints_x, map_waypoints_y);
 
 			json msgJson;
 
-			vector<double> ptsx;
-			vector<double> ptsy;
-			vector<double> next_x;
-			vector<double> next_y;
-			vector<double> next_x_vals;
-			vector<double> next_y_vals;
-			
+			vector<double> next_x, next_y; //x and y path waypoints 
+			vector<double> next_x_vals, next_y_vals; //final trajectory points after processing
+
+			//use a maximum of 25 points from previous path
 			double last_point = previous_path_x.size();
 			if (last_point > 25)
 				last_point = 25;
 
+			//add remaining path points to current trajectory
 			for (int i = 0; i < previous_path_x.size(); i++)
 			{
+				//points for polynomial fitting
 				next_x.push_back(previous_path_x[i]);
 				next_y.push_back(previous_path_y[i]);
-				if (i < 25) {
+				if (i < last_point) {
+					//directly feed some points to next trajectoy
 					next_x_vals.push_back(previous_path_x[i]);
 					next_y_vals.push_back(previous_path_y[i]);
 				}
 			}
 
-
-			if (previous_path_x.size() == 0) 
+			//initialize previous path end points in frenet coordinates
+			if (previous_path_x.size() == 0)
 			{
-				end_path_s = car_s;
-				end_path_d = car_d;
 				end_s = car_s;
 				end_d = car_d;
 				end_speed = 0.44704*car_speed;
 			}
 
-			auto cost = lane_cost(car_s, car_d, 20, car_speed, sensor_fusion_sd_frame);
+			//calculate cost of each lane
+			auto cost = lane_cost(car_s, car_d, ref_velocity, car_speed, sensor_fusion_sd_frame);
+
+			//accumulate newly calculated cost
 			for (int i = 0; i < cost.size(); i++)
 				accum_lane_cost[i] += cost[i];
+
 			if ((iteration % 100 == 0))
 			{
+				//average the accumulated costs
 				for (int i = 0; i < cost.size(); i++)
 					accum_lane_cost[i] = accum_lane_cost[i] / 100.0;
 
+				//find best frenet d value for driving
 				d_target = desired_d(end_d, accum_lane_cost);
-
-				cout << accum_lane_cost[0] << "\t" << accum_lane_cost[1] << "\t" << accum_lane_cost[2] << endl;
-				cout << d_target << endl;
+				
+				//reset accumulated cost values
 				accum_lane_cost = { 0, 0, 0 };
 			}
 			
-			auto path = trajectory(end_s, end_d, d_target, ref_velocity, end_speed, sensor_fusion_sd_frame, previous_path_x.size(), map_waypoints_s, map_waypoints_x, map_waypoints_y);
-
-			iteration++;
+			//update waypoints
+			auto path = waypoints(end_s, end_d, d_target, ref_velocity, end_speed, sensor_fusion_sd_frame, previous_path_x.size(), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+			
+			//update previous path end points
 			if (path.size()) {
 				end_s = path[path.size() - 1][0];
 				end_d = path[path.size() - 1][1];
 				end_speed = path[path.size() - 1][2];
 			}
-
+			
+			//concatenate newly calculated 
 			for (int i = 0; i < path.size(); i++)
 			{
 				next_x.push_back(path[i][3]);
 				next_y.push_back(path[i][4]);
-				speeds.push_back(path[i][2]);
-				if (speeds.size() > 50)
-					speeds.erase(speeds.begin());
 			}
 
+			//select few waypoints for time polynomial fitting
+			vector<double> ptsx, ptsy; //selected waypoints for polynomial fitting
 			vector<double> time;
 			for (int i = 0; i < next_x.size(); i++)
 			{
@@ -621,59 +600,71 @@ int main() {
 				}
 			}
 
+			//fit selected points to a second order polynomial
 			auto x_poly = polyfit(time, ptsx, 2);
 			auto y_poly = polyfit(time, ptsy, 2);
 			
-			double xcar, ycar;
+			//add points from fitted polynomial to final trajectory points
 			for (int i = (1+last_point); i < 51; i++)
 			{
+				//evalute x and y points
 				double t = (double)i * 0.02;
-				xcar = polyeval(x_poly, t);
-				ycar = polyeval(y_poly, t);
+				double xcar = polyeval(x_poly, t);
+				double ycar = polyeval(y_poly, t);
 				
-				if (next_x_vals.size() > 1) {
-					last_vel_x = (xcar - next_x_vals[next_x_vals.size() - 1])/0.02;
-					last_vel_y = (ycar - next_y_vals[next_y_vals.size() - 1])/0.02;
-				}
-				else {
-					last_vel_x = (xcar - car_x)/0.02;
-					last_vel_y = (ycar - car_y)/0.02;
-				}
-				
-				last_speed = sqrt(pow(last_vel_x, 2) + pow(last_vel_y, 2));
+				//limit velocity not to exceed limit
 
-				if (last_speed > ref_velocity) {
-					last_vel_x = last_vel_x * ref_velocity / last_speed;
-					last_vel_y = last_vel_y * ref_velocity / last_speed;
-				}
-				
+				double vel_x, vel_y; //velocity in x and y directions
+
+				//calculate velocity
 				if (next_x_vals.size() > 1) {
-					xcar = next_x_vals[next_x_vals.size() - 1] + last_vel_x * 0.02;
-					ycar = next_y_vals[next_y_vals.size() - 1] + last_vel_y * 0.02;
+					vel_x = (xcar - next_x_vals[next_x_vals.size() - 1])/0.02;
+					vel_y = (ycar - next_y_vals[next_y_vals.size() - 1])/0.02;
 				}
 				else {
-					xcar = car_x + last_vel_x * 0.02;
-					ycar = car_y + last_vel_y * 0.02;
+					vel_x = (xcar - car_x)/0.02;
+					vel_y = (ycar - car_y)/0.02;
 				}
-				prev_vel_x = last_vel_x;
-				prev_vel_y = last_vel_y;
 				
+				//limit velocity
+				double speed = sqrt(pow(vel_x, 2) + pow(vel_y, 2));
+				if (speed > ref_velocity) {
+					vel_x = vel_x * ref_velocity / speed;
+					vel_y = vel_y * ref_velocity / speed;
+				}
+				
+				//update points based on limited velocity
+				if (next_x_vals.size() > 1) {
+					xcar = next_x_vals[next_x_vals.size() - 1] + vel_x * 0.02;
+					ycar = next_y_vals[next_y_vals.size() - 1] + vel_y * 0.02;
+				}
+				else {
+					xcar = car_x + vel_x * 0.02;
+					ycar = car_y + vel_y * 0.02;
+				}
+
+				//push points
 				next_x_vals.push_back(xcar);
 				next_y_vals.push_back(ycar);
 
 			}
+
+			//reevaluate end path points to mitigate large biases 
+			//due to continuous conversion between cartessian and frenet
 			if ((iteration % 500) == 0)
 			{
 				double xdiff = next_x_vals[next_x_vals.size() - 1] - next_x_vals[next_x_vals.size() - 2];
 				double ydiff = next_y_vals[next_y_vals.size() - 1] - next_y_vals[next_y_vals.size() - 2];
 				double final_yaw = atan2(ydiff, xdiff);
-				auto end_frenet = getFrenetss(next_x_vals[next_x_vals.size() - 1], next_y_vals[next_y_vals.size() - 1], xdiff / 0.02, ydiff / 0.02, final_yaw, map_waypoints_x, map_waypoints_y);
+				auto end_frenet = getFrenet(next_x_vals[next_x_vals.size() - 1], next_y_vals[next_y_vals.size() - 1], xdiff / 0.02, ydiff / 0.02, final_yaw, map_waypoints_x, map_waypoints_y);
 				end_s = end_frenet[0];
 				end_d = end_frenet[1];
 				end_speed = end_frenet[2];
 			}
+
+			iteration++; //increment number of iterations
 			
-			
+			//pass waypoint to Json message
           	msgJson["next_x"] = next_x_vals;
           	msgJson["next_y"] = next_y_vals;
           	auto msg = "42[\"control\","+ msgJson.dump()+"]";
