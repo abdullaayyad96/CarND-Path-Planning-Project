@@ -6,6 +6,7 @@ Self-Driving Car Engineer Nanodegree Program
 [//]: # (Picture Definition)
 [cost]: https://user-images.githubusercontent.com/37302013/48884687-e02f3600-ee68-11e8-89f4-5d2d9961a411.png
 [frenet]: https://user-images.githubusercontent.com/37302013/48889248-8c2c4d80-ee78-11e8-9d3d-71ba9f0afaea.png
+[test]: https://user-images.githubusercontent.com/37302013/48889855-80418b00-ee7a-11e8-8401-3e3b57b61acb.png
 
 ## Project Discription
 
@@ -138,6 +139,14 @@ Once a desired lane is determined, a rough trajectory is generated in order to m
 ### Smoothening the waypoints with polynomial fitting
 
 The last step is smoothening the waypoints. The main reason why smoothening is needed is because in the previous steps, waypoint generation is first done in frenet and then converted to cartesian coordinates. This leads to the generated path being indifferentiable at some points. This causes very high and unrealistic accelerations at times. Therefore, several waypoints are selected and fitted into second order polynomials ensuring a continuously differentiable trajectory/path. Waypoints are then sampled from these polynomials with a 0.02s time difference and fed to the simulator. These steps are implemented in lines 690-770 of "srs/main.cpp" and conclude the implementation of the path planner.
+
+---
+
+## Testing
+
+The method described above had been simulated using the Udacity simulator. The vehicle was capable of driving at least 30 Miles without any incidents while maintaining a speed close to the reference velocity of 50 mph as seen in the picture below:
+
+![test_pic][test]
 
 ---
 
