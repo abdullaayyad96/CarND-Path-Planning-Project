@@ -1,7 +1,6 @@
 # CarND-Path-Planning-Project
 Self-Driving Car Engineer Nanodegree Program
 
----
 
 [//]: # (Picture Definition)
 [cost]: https://user-images.githubusercontent.com/37302013/48884687-e02f3600-ee68-11e8-89f4-5d2d9961a411.png
@@ -71,8 +70,6 @@ the path has processed since last time.
 
 2. There will be some latency between the simulator running and the path planner returning a path, with optimized code usually its not very long maybe just 1-3 time steps. During this delay the simulator will continue using points that it was last given, because of this its a good idea to store the last points you have used so you can have a smooth transition. previous_path_x, and previous_path_y can be helpful for this transition since they show the last points given to the simulator controller with the processed points already removed. You would either return a path that extends this previous path or make sure to create a new path that has a smooth transition with this last path.
 
----
-
 ## Dependencies
 
 * cmake >= 3.5
@@ -97,8 +94,6 @@ the path has processed since last time.
 ## Project Instructions and Rubric
 
 The project has been developed to follow this [rubric](https://review.udacity.com/#!/rubrics/1971/view).
-
----
 
 ## Trajectory Generation Methodology
 
@@ -140,15 +135,11 @@ Once a desired lane is determined, a rough trajectory is generated in order to m
 
 The last step is smoothening the waypoints. The main reason why smoothening is needed is because in the previous steps, waypoint generation is first done in frenet and then converted to cartesian coordinates. This leads to the generated path being indifferentiable at some points. This causes very high and unrealistic accelerations at times. Therefore, several waypoints are selected and fitted into second order polynomials ensuring a continuously differentiable trajectory/path. Waypoints are then sampled from these polynomials with a 0.02s time difference and fed to the simulator. These steps are implemented in lines 690-770 of "srs/main.cpp" and conclude the implementation of the path planner.
 
----
-
 ## Testing
 
 The method described above had been simulated using the Udacity simulator. The vehicle was capable of driving at least 30 Miles without any incidents while maintaining a speed close to the reference velocity of 50 mph as seen in the picture below:
 
 ![test_pic][test]
-
----
 
 ## Frenet Coordinates
 
