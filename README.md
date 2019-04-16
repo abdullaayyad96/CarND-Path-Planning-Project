@@ -6,10 +6,13 @@ Self-Driving Car Engineer Nanodegree Program
 [cost]: https://user-images.githubusercontent.com/37302013/48884687-e02f3600-ee68-11e8-89f4-5d2d9961a411.png
 [frenet]: https://user-images.githubusercontent.com/37302013/48889248-8c2c4d80-ee78-11e8-9d3d-71ba9f0afaea.png
 [test]: https://user-images.githubusercontent.com/37302013/48889855-80418b00-ee7a-11e8-8401-3e3b57b61acb.png
+[gif]: ./path_planning_trim.gif 
 
 ## Project Discription
 
 This project is part of UDacity's Self-Driving Car Engineer Nanodegree Program. The purpose is to develop a path/trajectory planner to safely navigate a vehicle in a highway.
+
+![alt_text][gif]
 
 ### Simulator.
 You can download the Term3 Simulator which contains the Path Planning Project from the [releases tab (https://github.com/udacity/self-driving-car-sim/releases/tag/T3_v1.2).
